@@ -1,0 +1,129 @@
+/*
+*
+*    NAME: eric-cmalarm.slax
+*    PURPOSE: Created for Eric to disable/enable interfaces
+*             on an SRX based on the CMALARM error message.
+*
+*
+*    CREATED: 09/12/13
+*    BY: Jay Wilson (Sr Con Eng -- AT DC AMER)
+*    LAST MOD: 09/12/13
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script
+*  when specific events trigger.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "test";
+            <description> "Run in test mode";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "Turn on debugging";
+        }
+}
+param $test;
+param $debug;
+param $action;
+
+var $con = jcs:open();
+
+match / {
+    <event-script-results> {
+        var $event = event-script-input/trigger-event/id;
+        if ($debug) {
+            var $msg1 = "event = " _ $event;
+            expr jcs:syslog("user.info", "eric-CMALARM.slax[Debug]: ", $msg1);
+        }
+        
+        call disable;
+        expr jcs:close($con);
+    }
+}
+
+/*
+*   NAME: DISABLE
+*   PURPOSE: Disables the interfaces
+*   CALLED: Called if the event interface matches the RTG Interface
+*
+*   PARMS PASSED:
+*
+*/
+template disable() {
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <interface> {
+                         <name> "ae0";
+                         <disable>;
+                     }
+                     <interface> {
+                         <name> "ae1";
+                         <disable>;
+                     }
+                     <interface> {
+                         <name> "xe-0/0/0";
+                         <disable>;
+                     }
+                     <interface> {
+                         <name> "xe-0/1/0";
+                         <disable>;
+                     }
+                 }
+            }
+        }
+        if ($debug) {
+            expr jcs:syslog("user.info", "eric-CMALARM[DEBUG]: ", "In DISABLE");
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        if ($test) {
+           expr jcs:syslog("user.info", "eric-CMALARM[TEST]: ", $xml);
+        }
+        else {
+            var $results := {
+                call jcs:load-configuration($connection = $con, $configuration = $xml);
+            }
+/*
+*
+*   Check the results and process them
+*
+*/
+            for-each ($results//xnm:warning) {
+                if (not(contains(message,"statement not found:"))) {
+                    expr jcs:syslog("user.warning", "eric-CMALARM[Warning]: ", message);
+                }
+            }
+            if ($results//xnm:error) {
+                for-each ($results//xnm:error) {
+                    expr jcs:syslog("user.error", "eric-CMALARM[Error]: ", message);
+                }
+            }
+            else {
+                expr jcs:syslog("user.info", "eric-CMALARM[Success]: ", "Successfully deactivated the interface");
+            }
+        }
+}

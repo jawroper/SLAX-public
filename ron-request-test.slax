@@ -1,0 +1,354 @@
+/*
+*
+*    NAME: VFC.slax
+*    PURPOSE: Created for DCBU to apply configuratio restrictions
+*             to a QFabric.
+*
+*    CREATED: 01/29/12
+*    BY: Jay Wilson
+*    LAST MOD: 01/30/12
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.01 = renamed jcs:dump to jcs:cdump
+*                added a debug check to jcs:cdump
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ns exsl = "http://exslt.org/common";
+
+import "../import/junos.xsl";
+/*
+*
+*  Global Varibles
+*
+*/
+var $pref-split="%";
+var $pref-before="vfc";
+var $prefix= $pref-before _ $pref-split;
+var $node-split="-";
+var $debug="";
+
+match configuration {
+   var $root=.;
+   call warning($message = "Grabbing all nodes that have a change tag");
+   var $changed := .//*[@junos:changed];
+   call jcs:cdump($out=$changed, $style="<>");
+/*
+*
+*  Check to see if any changes have been made or
+*    if a apply-macro even exists.  If not, exit
+*    the script
+*
+*/
+   if (string($changed) = '') {
+       call warning($message = "The configuration has not been changed.");
+   }
+   else {
+       if (string(apply-macro) = '') {
+           call warning($message = "No apply-macros to validate.");
+       }
+       else {
+           if ($debug) {
+               call warning($message = "Found a change.");
+           }
+           call check-config($start-node=$changed,$root=$root);
+       }
+   }
+}
+/*
+*   NAME: CHECK-CONFIG
+*   PURPOSE: To ready the restriction information for exist for the user
+*            running the script and then determine if any restrictions
+*            have been violated.
+*   CALLED: Called after all the basis checks have been performed.
+*
+*
+*   PARMS PASSED:
+*        $start-node = the XML node-set of nodes that have a 
+*                      "changed" tag
+*        $root = the root of the configuration XML node-set
+*
+*/
+template check-config($start-node, $root) {
+/*
+*  Process the apply-macros 
+*  Only look at macros that start with the prefix 
+*
+*/
+    if ($debug) {
+        call warning($message = "before the loop.");
+    }
+    for-each (apply-macro[starts-with(name,$prefix)]) {
+        var $vlans = data[name = 'vlans']/value;
+        var $nodes = data[name = 'nodes']/value;
+        var $name = substring-after(name,$pref-split);
+        var $who = {
+                     if ($junos-context/user-context/user == "root") {
+                        expr $junos-context/user-context/class-name;
+                     }
+                     else {
+                        expr substring-after($junos-context/user-context/class-name,"j-");
+                     }
+                   }
+        if ($debug) {
+            call warning($message = "Processing apply-macros.");
+        }
+/*
+*
+*  Determine if the user issuing the commit has
+*  commit restrictions. If they do, then validate
+*  all configuration changes against the list of
+*  allowed changes.
+*
+*/
+       if ($name == $who) {
+           call warning($message = "You have restrictions.  Validating changes.");
+           call process-restrictions($start-node=$start-node, $vlans=$vlans, $nodes=$nodes, $name=$name);
+       }
+       else {
+           call warning($message = "No restrictions.");
+       }
+    }
+}
+/*
+*   NAME: PROCESS-RESTRICTIONS
+*   PURPOSE: To build a node-set of all the restrictions for the user running
+*            script and then compare the restrictions to what has changed.
+*   CALLED: Called from check-config after it has been determined that this
+*           user has restrictions.
+*
+*
+*   PARMS PASSED:
+*        $start-node = the XML node-set of nodes that have a 
+*                      "changed" tag
+*        $vlans = node-set of vlans the user is restricted to 
+*        $nodes = node-set of QF/nodes the user is restricted to
+*        $name  = The name of the user class that the restrictions
+*                 are for.  This allows the script to build multiple
+*                 restriction node-sets without a conflict.
+*
+*/
+template process-restrictions($start-node, $vlans, $nodes, $name) {
+ 
+    var $restrict-ns := {
+        <xsl:element name=$name> {
+            <xsl:element name="vlans"> {
+                call make-elements($items=$vlans, $seperator=",", $type="item");
+             }
+            <xsl:element name="nodes"> {
+                call make-elements($items=$nodes, $seperator=",", $type="item");
+             }
+        }
+    }
+    call jcs:cdump($out=$restrict-ns, $style="<>");
+    if (count($start-node/vlan) > 0) {
+        for-each ($start-node[name() == "vlan"]) {
+            if ($debug) {
+                call warning($message = "Found vlans to process.");
+            }
+            var $name = ./name;
+            call jcs:cdump($out=$name, $style="<>");
+            if (not($restrict-ns//vlans[item == $name])) {
+              call error($message = "You have modified a vlan that you are not authorized to modify.");
+           }
+       }
+    }
+    else {
+        if ($debug) {
+            call warning($message = "vlans haven't changed");
+        }
+    }
+    if (count($start-node//interface) > 0) {
+        for-each($start-node[name() == "interface"]) {
+            if ($debug) {
+                call warning($message = "Found interfaces to process.");
+            }
+            var $nm = ./name;
+            var $name = substring-before($nm,$node-split) _ $node-split;
+            call jcs:cdump($out=$name, $style="<>");
+            if (not(contains($restrict-ns//nodes/item,$name))) {
+               call error($message = "You have modified an interface that you are not authorized to modify.");
+            }
+        }
+    }
+    else {
+        if ($debug) {
+            call warning($message = "no interface changes");
+        }
+    }
+
+}
+/*
+*   NAME: MAKE-ELEMENTS
+*   PURPOSE: Adds a node to the restrictions node-set.
+*   CALLED: Called by process-restrictions and by itself to build the
+*           all nodes.
+*
+*
+*   PARMS PASSED:
+*        $items = The list of "things" that need to be seperated into
+*                 nodes in a node-set
+*        $seperator = A character or string that seperator each member
+*                     in the $items variable
+*        $type = The element name to use when building the node-set
+*
+*/
+template make-elements($items, $seperator, $type) {
+/*
+*
+*  remove the white-space and put a seperator on the end if none exists
+*
+*/
+    var $fixeditems = {
+        if (contains($items, $seperator)) {
+            expr normalize-space($items);
+        
+        } else {
+            expr normalize-space($items)  _ $seperator;
+        }
+    }
+/*
+*
+*  split the remaining string
+*
+*/
+    var $before = substring-before($fixeditems, $seperator);
+    var $after = substring-after($fixeditems, $seperator);
+/*
+* 
+*  output current value and loop until all values have been output
+*
+*/
+    <xsl:element name=$type> $before;
+    if ($after) {
+        call make-elements($items=$after, $seperator=$seperator, $type=$type);
+    }
+}
+/*
+*
+*  Modified version of Phil Shafer's jcs:cdump.
+*  Output is formated for dumping from a commit script
+*     by placing the dumpped information in "warning"
+*     messages.
+*
+*/
+template jcs:cdump ($name, $out, $indent = "", $style)
+{
+    if ($debug) {
+        var $mydent = {
+            if ($name) {
+                expr $indent _ "  ";
+            } else {
+                expr $indent;
+            }
+        }
+        if ($name) {
+            var $v1 = $indent _ $name _ " = {";
+            call warning($message = $v1);
+        }
+        var $oq = {
+            if ($style == "<>") {
+                 expr "<";
+            }
+        }
+        var $cq = {
+            if ($style == "<>") {
+                expr ">";
+            }
+        }
+
+        if (exsl:object-type($out) == "string") {
+            var $v2 = $mydent _ "'" _ $out _ "';";
+            call warning($message = $v2);
+
+        } else if (name($out)) {
+            var $text = $out/text();
+
+            if ($out/ *) {
+                var $v2-2 = $mydent _ $oq _ name($out) _ $cq _ "{";
+                call warning($message = $v2-2);
+                for-each ($out/ *) {
+                    call jcs:cdump($out = ., $indent = "  " _ $mydent);
+                }
+                var $v3 = $mydent _ "}";
+                call warning($message = $v3);
+
+            } else if ($text) {
+                if (string-length($out) == 1 && starts-with($out, "\n")) {
+                    var $v4 = $mydent _ $oq _ name($out) _ $cq _ ";";
+                    call warning($message = $v4);
+                } else {
+                    var $v5 = $mydent _ $oq _ name($out) _ $cq _ " '" _ $text _ "';";
+                    call warning($message = $v5);
+                }
+
+            } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+                var $v6 = $mydent _ $oq _ name($out) _ $cq _ ";";
+                call warning($message = $v6);
+            } else {
+                var $v7 = $mydent _ $oq _ name($out) _ $cq _ "{";
+                call warning($message = $v6);
+                for-each ($out/ *) {
+                    call jcs:cdump($out = ., $indent = "  " _ $mydent);
+                }  
+                var $v8 = $mydent _ "}";
+                call warning($message = $v8);
+            }
+
+        } else if ($out/node()) {
+            for-each ($out/ *) {
+                call jcs:cdump($out = ., $indent = $mydent);
+            }  
+
+        } else if ($out/text()) {
+            var $v9 = $mydent _ .;
+            call warning($message = $v9);
+        }
+
+        if ($name) {
+            var $v10 = $indent _ "}";
+            call warning($message = $v10);
+        }
+   }
+}
+/*
+*   NAME: WARNING
+*   PURPOSE: Writes a warning message to the screen when committing
+*   CALLED: Called any time I want to write a "warning" to the screen.
+*
+*
+*   PARMS PASSED:
+*        $message = The string to print out 
+*
+*/
+template warning($message) {
+   <xnm:warning> {
+      <message> {
+         expr $message;
+      }
+   }
+}
+/*
+*   NAME: ERROR
+*   PURPOSE: Writes a error message to the screen when committing
+*   CALLED: Called any time I want to write an "error" to the screen.
+*
+*
+*   PARMS PASSED:
+*        $message = The string to print out 
+*
+*/
+template error($message) {
+   <xnm:error> {
+      <message> {
+         expr $message;
+      }
+   }
+}

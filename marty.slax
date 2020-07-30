@@ -1,0 +1,124 @@
+/* Machine Crafted with Care (tm) by slaxWriter */
+version 1.0;
+
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns ext = "http://xmlsoft.org/XSLT/namespace";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+
+import "../import/junos.xsl";
+/* Open a connection to MGD */
+var $connection = jcs:open();
+/* Figure out which node is the secondary */
+var $cluster-info-rpc = <rpc> {
+    <get-route-engine-information> {
+        <node> "local";
+    }
+}
+var $cluster-info = jcs:execute($connection, $cluster-info-rpc);
+var $local-node = $cluster-info//multi-routing-engine-item/re-name;
+var $remote-node = {
+    if ($local-node == "node0") {
+        expr "node1";
+    
+    } else if ($local-node == "node1") {
+        expr "node0";
+    }
+}
+var $rg0-master = {
+    call get-master() {
+        with $redundancy-group = {
+            expr "0";
+         }
+    }
+}
+
+template get-master () {
+    param $redundancy-group = {
+        expr "0";
+    }
+    var $get-cluster-status = <rpc> {
+        <get-chassis-cluster-status> {
+            <redundancy-group> $redundancy-group;
+        }
+    }
+    var $cluster-status-results = jcs:execute($connection, $get-cluster-status);
+    /* Determine the master of the chassis cluster */
+    var $rg-node0-priority = $cluster-status-results/redundancy-group[$redundancy-group + 1]/device-stats/redundancy-group-status[1];
+    var $rg-node1-priority = $cluster-status-results/redundancy-group[$redundancy-group + 1]/device-stats/redundancy-group-status[2];
+    
+    if ($rg-node0-priority == "primary" && $rg-node1-priority != "primary") {
+        /* Node0 is the primary returning Node0 */
+        <text> "node0";
+    
+    } else if ($rg-node0-priority != "primary" && $rg-node1-priority == "primary") {
+        /* Node1 is the primary returning Node1 */
+        <text> "node1";
+    }
+}
+
+template copy-idp-signatures ($from-node, $to-node) {
+    param $path = {
+        expr "/var/db/idpd/sec-download/";
+    }
+    var $ls-rpc = <rpc> {
+        <file-list> {
+            <path> $path;
+            <detail>;
+        }
+    }
+    var $files = jcs:execute($connection, $ls-rpc)//file-information[starts-with(file-permissions/@junos:format, "-")]/file-name;
+    /* Loop through the files and copy every file to the new node */
+    
+    for-each ($files) {
+        var $file-copy-rpc = <rpc> {
+            <file-copy> {
+                <source> $path _ "/" _ .;
+                <destination> $remote-node _ ":/var/db/idpd/sec-download/";
+            }
+        }
+        /* <xsl:copy-of select="$file-copy-rpc"/> */
+        expr jcs:execute($connection, $file-copy-rpc);
+    }
+}
+
+template install-packages ($node) {
+    var $regex-result = jcs:regex("node([01])", $node);
+    var $node-id = $regex-result[2];
+    var $install-package-rpc = <rpc> {
+        <command> {
+            expr " request security idp security-package install node ";
+            expr $node-id;
+        }
+    }
+    /* <xsl:copy-of select="$install-package-rpc"/> */
+    expr jcs:execute($connection, $install-package-rpc);
+}
+
+match / {
+    <op-script-results> {
+        <output> {
+            if ($local-node == $rg0-master) {
+                /* Copy the security packages to the backup node */
+                call copy-idp-signatures($from-node = $local-node, $to-node = $remote-node) {
+                    with $path = {
+                        expr "/var/db/idpd/sec-download";
+                     }
+                }
+                /* If the package was installed by nsm the files are stored in a different location */
+                call copy-idp-signatures($from-node = $local-node, $to-node = $remote-node) {
+                    with $path = {
+                        expr "/var/db/idpd/nsm-download";
+                     }
+                }
+                /* Installl the packages */
+                call install-packages($node = $remote-node);
+            
+            } else {
+                expr jcs:printf("Local node is not the RG0 master. Nothing to do
+");
+            }
+        }
+    }
+}
+

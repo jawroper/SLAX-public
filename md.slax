@@ -1,0 +1,190 @@
+/*
+*
+*    NAME: mb.slax
+*    PURPOSE: Created for Apple as a wrapper for working with the
+*             PFE commands specific to micoburst (aka Incast) buffer
+*             issues.
+*
+*    CREATED: 07/12/12
+*    BY: Jay Wilson (SR Data Center Consulting Eng. Americas)
+*    LAST MOD: 07/12/12
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+var $arguments = {
+    <argument> {
+        <name> "action";
+        <description> "Start/Stop";
+    }
+    <argument> {
+        <name> "interval";
+        <description> "How often to check the for burst in microseconds. Default is 4";
+    }
+    <argument> {
+        <name> "port";
+        <description> "Port to monitor. Value of 66 means all and is the default.";
+    }
+    <argument> {
+        <name> "dlowt";
+        <description> "Buffer depth low threshold";
+    }
+    <argument> {
+        <name> "dhight";
+        <description> "Buffer depth high threshold";
+    }
+    <argument> {
+        <name> "llowt";
+        <description> "Buffer latency low threshold";
+    }
+    <argument> {
+        <name> "lhight";
+        <description> "Buffer latency high threshold";
+    }
+}
+
+param $action;
+param $interval;
+param $port;
+param $dlowt;
+param $dhight;
+param $llowt;
+param $lhight;
+
+match / {
+    if (not($action) && not($port) && not($interval)) {
+       call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "You must specify an action, port, or interval");
+    }
+    else {
+       var $con = jcs:open();
+       if (not($con)) {
+          call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Not able to connect to local mgd");
+       }
+       else {
+          call issue_command($con=$con);
+          expr jcs:close($con);
+       }
+     
+    }
+}
+
+/*
+*   NAME: ISSUE_COMMAND
+*   PURPOSE: Checks for all the Params and then issues the pfe command
+*   CALLED: Called after the we verify that an action, port, or interval
+*           has been specified.
+*
+*   PARMS PASSED:
+*        $con = Open socket to mgd
+*
+*/
+template issue_command($con) {
+   
+   if ($action) {
+      if (not($action == "start") and not($action == "stop")) {
+         call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Action must be start or stop");
+      }
+      else {
+          var $commanda = $action _ " analyzer queue-monitor";
+          var $rpca= <request-pfe-execute> {
+                     <target> "fpc0";
+                     <command> $commanda;
+                     }
+          var $rpc_outa = jcs:execute($con,$rpca);
+      }
+   }
+   else if ($interval) {
+      if ($interval < 4) {
+         call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Interval must be >= 4");
+      }
+      else {
+         var $commandi = "set analyzer queue-monitor interval " _ $interval;
+         var $rpci= <request-pfe-execute> {
+                    <target> "fpc0";
+                    <command> $commandi;
+                     }
+         var $rpc_outi = jcs:execute($con,$rpci);
+      }
+   }
+   else if ($port && ($port = 66 || $port < 49)) {
+      if ($dlowt && $dhight) {
+         if ($dlowt < 5) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Depth must be >= 5 and < X");
+         }
+         else {
+            var $commandd = "set analyzer queue-monitor port " _ $port _ " depth " _ $dlowt _ " " _ $dhight;
+            var $rpcd= <request-pfe-execute> {
+                       <target> "fpc0";
+                       <command> $commandd;
+                       }
+            var $rpc_outd = jcs:execute($con,$rpcd);
+         }
+      }
+      else if ($llowt && lhight) {
+         if ($llowt < 5 && $lhight < 8193) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Latency must be >= 5 and <= 8192");
+         }
+         else {
+            var $commandl = "set analyzer queue-monitor port " _ $port _ " latency " _ $llowt _ " " _ $lhight;
+            var $rpcl= <request-pfe-execute> {
+                       <target> "fpc0";
+                       <command> $commandl;
+                       }
+            var $rpc_outl = jcs:execute($con,$rpcl);
+         }
+      }
+      else if ($port > 48 && not($port = 66)) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Port must by <= 48 or 66");
+      }
+      else {
+            var $commandl = "set analyzer queue-monitor port " _ $port;
+            var $rpcp= <request-pfe-execute> {
+                       <target> "fpc0";
+                       <command> $commandp;
+                       }
+            var $rpc_outp = jcs:execute($con,$rpcp);
+         }
+      }
+   }
+   }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}
+

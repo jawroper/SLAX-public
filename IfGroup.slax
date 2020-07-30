@@ -1,0 +1,172 @@
+/*
+*
+*    NAME: IfGroup.slax
+*    PURPOSE: Created for to activate/deactivate
+*             a group hierarchy in the Interfaces 
+*             hierarchy when a specified link changes
+*             state.
+*
+*    CREATED: 12/21/10
+*    BY: Jay Wilson (Sr Consulting Engineer -- Americas)
+*    LAST MOD: 12/21/10
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script.
+*  This argument is by the event attribute "interface-name"
+*  when the event triggers.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "group";
+            <description> "Group to disable/enable";
+        }
+        <argument> {
+            <name> "event-type";
+            <description> "SNMP Link Event (up/down)";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "True on debugging";
+        }
+}
+param $group;
+param $event-type;
+param $debug;
+
+var $con = jcs:open();
+
+match / {
+    <event-script-results> {
+        if ($group && $event-type) {
+            if (contains($event-type,"up")) {
+                call enable;
+            }
+            else {
+                call disable;
+            }
+        }
+        else {
+            expr jcs:syslog("user.warning", "IfGroup.slax[Warning]: ", "Missing a PARM(group event-type)");
+        }
+     }
+     expr jcs:close($con);
+}
+/*
+*   NAME: DISABLE
+*   PURPOSE: Active the group specificed
+*   CALLED: Called if the event-type contains the word "down"
+*
+*   PARMS PASSED:
+*
+*/
+template disable() {
+/*
+*
+*   XML structure for disabling Interfaces by group 
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <apply-groups> $group;
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            expr jcs:syslog("user.warning", "IfGroup.slax[Warning]: ", message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "IfGroup.slax[Error]: ", message);
+            }
+        }
+        else {
+            var $message = "Successfully activated group=" _ $group;
+            expr jcs:syslog("user.info", "IfGroup.slax[Success]: ", $message); 
+        }
+}
+/*
+*   NAME: ENABLE
+*   PURPOSE: Enable interfaces when link state changes to up
+*   CALLED: Called after snmp_trap_link_up
+*
+*   PARMS PASSED:
+*
+*/
+template enable() {
+/*
+*
+*   XML structure for enabling Interfaces by group
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <apply-groups delete = "delete"> $group;
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            expr jcs:syslog("user.warning", "IfGroup.slax[Warning]: ", message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "IfGroup.slax[Error]: ", message);
+            }
+        }
+        else {
+            var $message = "Successfully deactivated group=" _ $group;
+            expr jcs:syslog("user.info", "IfGroup.slax[Success]: ", $message);
+        }
+}
+
+

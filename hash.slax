@@ -1,0 +1,451 @@
+/*
+*
+*    NAME: hash.slax
+*    PURPOSE: Created to determine which link in a LAG traffic will  
+*             will be sent over.
+*
+*    CREATED: 09/18/10
+*    BY: Jay Wilson (Sr Consulting Engineer)
+*    LAST MOD: 09/18/10
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Added back param checking
+*                Tighted up L3 hash math
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "smac";
+        <description> "Source MAC address";
+    }
+    <argument> {
+        <name> "dmac";
+        <description> "Destination MAC address";
+    }
+    <argument> {
+        <name> "sip";
+        <description> "Source IP address";
+    }
+    <argument> {
+        <name> "dip";
+        <description> "Destination IP address";
+    }
+    <argument> {
+        <name> "sport";
+        <description> "Source Port number";
+    }
+    <argument> {
+        <name> "dport";
+        <description> "Destination Port number";
+    }
+    <argument> {
+        <name> "members";
+        <description> "Number of link members in the LAG";
+    }
+    <argument> {
+        <name> "z";
+    }
+}
+param $smac;
+param $dmac;
+param $sip;
+param $dip;
+param $sport;
+param $dport;
+param $members;
+param $z;
+
+match / {
+    <op-script-results> {
+        if ($sip || $dip || $sport || $dport) {
+            call L3-hash();
+        }
+        else {
+            call L2-hash();
+        }
+    }
+}
+/*
+*   NAME: L2-HASH
+*   PURPOSE: To process the L2 params entered at invocation time.
+*   CALLED: Called after it has been determined that L2 is being
+*           asked for.
+*
+*   PARMS PASSED:
+*
+*/
+template L2-hash() {
+/*
+*
+*  Make sure all needed params have been specified
+*
+*/
+    if (not($smac) || not($dmac) || not($members)) {
+        <output> jcs:printf("***************************************************************\n");
+        <output> jcs:printf("*                                                             *\n");
+        <output> jcs:printf("* Default assumption is L2 hash calculation!                  *\n");
+        <output> jcs:printf("*                                                             *\n");
+        <output> jcs:printf("* Missing at least one required PARAM:                        *\n");
+        <output> jcs:printf("*     smac -- source MAC address                              *\n");
+        <output> jcs:printf("*     dmac -- destination MAC address                         *\n");
+        <output> jcs:printf("*     members -- number of member links in the LAG            *\n");
+        <output> jcs:printf("*                                                             *\n");
+        <output> jcs:printf("***************************************************************\n");
+    }
+    else if ($members < 2 || $members > 63) {
+        <output> jcs:printf("\nError: Members param must be between 2 and 63\n");
+    }
+    else if (string-length($smac) - string-length(translate($smac, ':', '')) != 5) {
+        <output> jcs:printf("\nError: SMAC param must contain a valid MAC address\n");
+    }
+    else if (string-length($dmac) - string-length(translate($dmac, ':', '')) != 5) {
+        <output> jcs:printf("\nError: DMAC param must contain a valid MAC address\n");
+    }
+    else {
+        call L2-calc();
+    }
+}
+/*
+*   NAME: L3-HASH
+*   PURPOSE: To process the L3 params entered at invocation time.
+*   CALLED: Called after it has been determined that L3 is being
+*           asked for.
+*
+*   PARMS PASSED:
+*
+*/
+template L3-hash() {
+/*
+*
+*  Make sure all need params have been specified
+*
+*/
+    if ( not($sip) || not($dip) || not($sport) || not($dport) || not($members) ) {
+        <output> jcs:printf("***************************************************************\n");
+        <output> jcs:printf("*                                                             *\n");
+        <output> jcs:printf("* Missing at least one required PARAM for L3 calculation:     *\n");
+        <output> jcs:printf("*     sip -- source IP address                                *\n");
+        <output> jcs:printf("*     dip -- destination IP address                           *\n");
+        <output> jcs:printf("*     sport -- source Port number                             *\n");
+        <output> jcs:printf("*     dport -- destination Port number                        *\n");
+        <output> jcs:printf("*     members -- number of member links in the LAG            *\n");
+        <output> jcs:printf("*                                                             *\n");
+        <output> jcs:printf("***************************************************************\n");
+    }
+    else if ($members < 2 || $members > 63) {
+        <output> jcs:printf("\nError: Members param must be between 2 and 63\n");
+    }
+    else if (string-length($sip) - string-length(translate($sip, '.', '')) != 3) {
+        <output> jcs:printf("\nError: SIP param must contain a valid IP address\n");
+    }
+    else if (string-length($dip) - string-length(translate($dip, '.', '')) != 3) {
+        <output> jcs:printf("\nError: DIP param must contain a valid IP address\n");
+    }
+    else if ($sport < 1 || $sport > 65536) {
+        <output> jcs:printf("\nError: SPORT param must contain a valid TCP/UDP port number\n");
+    }
+    else if ($dport < 1 || $dport > 65536) {
+        <output> jcs:printf("\nError: DPORT param must contain a valid TCP/UDP port number\n");
+    }
+    else {
+        call L3-calc();
+    }
+}
+/*
+*   NAME: L3-CALC
+*   PURPOSE: To calculate which link the packet will travel on
+*            based on the params specified.
+*   CALLED: Called after CHECK-L3-PARAMS has determined that all required
+*           params have valid data.
+*
+*   PARMS PASSED:
+*
+*/
+template L3-calc() {
+    var $temps1 = substring-after($sip,".");
+    var $sip1 = substring-before($sip,"."); 
+    var $temps2 = substring-after($temps1,".");
+    var $sip2 = substring-before($temps1,"."); 
+    var $sip3 = substring-before($temps2,".");
+    var $sip4 = substring-after($temps2,".");
+    var $tempd1 = substring-after($dip,".");
+    var $dip1 = substring-before($dip,".");
+    var $tempd2 = substring-after($tempd1,".");
+    var $dip2 = substring-before($tempd1,".");
+    var $dip3 = substring-before($tempd2,".");
+    var $dip4 = substring-after($tempd2,".");
+
+    <output> jcs:printf("\nCalculating hash for L3 traffic.\n\n");
+/*
+*
+*  Get only the bits we want
+*    SIP[5:0]   --> sip4
+*    SIP[21:16] --> sip2
+*    DIP[5:0]   --> dip4
+*    DIP[21:16] --> dip2
+*    SPORT[13:8]
+*    DPORT[13:8]
+*
+*/
+    var $sbits1 = $sip4 mod 64;
+    var $sbits2 = $sip2 mod 64;
+    var $dbits1 = $dip4 mod 64;
+    var $dbits2 = $dip2 mod 64;
+/*
+*
+*  Need to bitshift the port numbers
+*
+*/
+    var $sportT = floor($sport div 256);
+    var $spbits = $sportT mod 64;
+    var $dportT = floor($dport div 256);
+    var $dpbits = $dportT mod 64;
+/*
+*
+*  Get the complements so we can do XOR math
+*
+*/
+    var $sbits1-comp = { call complement ($cnput = $sbits1); }
+    var $sbits2-comp = { call complement ($cnput = $sbits2); }
+    var $dbits1-comp = { call complement ($cnput = $dbits1); }
+    var $dbits2-comp = { call complement ($cnput = $dbits2); }
+    var $spbits-comp = { call complement ($cnput = $spbits); }
+    var $dpbits-comp = { call complement ($cnput = $dpbits); }
+    var $xor1 = ($sbits1 * $sbits2-comp) + ($sbits2 * $sbits1-comp);
+    var $xor1-comp = { call complement ($cnput = $xor1); }
+    var $xor2 = ($xor1 * $dbits1-comp) + ($dbits1 * $xor1-comp);
+    var $xor2-comp = { call complement ($cnput = $xor2); }
+    var $xor3 = ($xor2 * $dbits2-comp) + ($dbits2 * $xor2-comp);
+    var $xor3-comp = { call complement ($cnput = $xor3); }
+    var $xor4 = ($xor3 * $spbits-comp) + ($spbits * $xor3-comp);
+    var $xor4-comp = { call complement ($cnput = $xor4); }
+    var $hash = ($xor4 * $dpbits-comp) + ($dpbits * $xor4-comp);
+/*
+*
+*  If z is not null, turn on debugging
+*
+*/
+    if ($z) {
+        <output> jcs:printf("Source %d...%d...%d...%d\n",$sip1,$sip2,$sip3,$sip4);
+        <output> jcs:printf("Destin %d...%d...%d...%d\n",$dip1,$dip2,$dip3,$dip4);
+        <output> jcs:printf("Sbits1 %d...Sbits1-comp %d...Sbits2 %d...Sbits2-comp %d\n",$sbits1,$sbits1-comp,$sbits2,$sbits2-comp);
+        <output> jcs:printf("Dbits1 %d...Dbits1-comp %d...Dbits2 %d...Dbits2-comp %d\n",$dbits1,$dbits1-comp,$dbits2,$dbits2-comp);
+        <output> jcs:printf("ST = %d....DT = %d\n",$sportT,$dportT);
+        <output> jcs:printf("Spbits = %d....Dpbits %d\n",$spbits,$dpbits);
+        <output> jcs:printf("Xor1 %d...Xor1-comp %d...Xor2 %d...Xor2-comp %d\n",$xor1,$xor1-comp,$xor2,$xor2-comp);
+        <output> jcs:printf("Xor3 %d...Xor3-comp %d...Xor4 %d...Xor4-comp %d\n",$xor3,$xor3-comp,$xor4,$xor4-comp);
+    }
+    <output> jcs:printf("Traffic will use member link %d\n", $hash mod $members);
+
+}
+/*
+*   NAME: L2-CALC
+*   PURPOSE: To calculate which link the packet will travel on
+*            based on the params specified.
+*   CALLED: Called after L2-HASH has determined that all required
+*           params have been specified.
+*
+*   PARMS PASSED:
+*
+*/
+template L2-calc() {
+/*
+*
+*  Need to convert the MAC address input into real HEX values
+*
+*/
+    var $temps1 = substring-after($smac,":");
+    var $smac1 = { call make-hex( $jnput = substring-before($smac,":")); }
+    var $temps2 = substring-after($temps1,":");
+    var $smac2 = { call make-hex( $jnput = substring-before($temps1,":")); }
+    var $temps3 = substring-after($temps2,":");
+    var $smac3 = { call make-hex( $jnput = substring-before($temps2,":")); }
+    var $temps4 = substring-after($temps3,":");
+    var $smac4 = { call make-hex ( $jnput = substring-before($temps3,":")); }
+    var $smac6 = { call make-hex ( $jnput = substring-after($temps4,":")); }
+    var $smac5 = { call make-hex ( $jnput = substring-before($temps4,":")); }
+    var $tempd1 = substring-after($dmac,":");
+    var $dmac1 = { call make-hex ( $jnput = substring-before($dmac,":")); }
+    var $tempd2 = substring-after($tempd1,":");
+    var $dmac2 = { call make-hex ( $jnput = substring-before($tempd1,":")); }
+    var $tempd3 = substring-after($tempd2,":");
+    var $dmac3 = { call make-hex ( $jnput = substring-before($tempd2,":")); }
+    var $tempd4 = substring-after($tempd3,":");
+    var $dmac4 = { call make-hex ( $jnput = substring-before($tempd3,":")); }
+    var $dmac6 = { call make-hex ( $jnput = substring-after($tempd4,":")); }
+    var $dmac5 = { call make-hex ( $jnput = substring-before($tempd4,":")); }
+
+
+    <output> jcs:printf("\nCalculating hash for L2 traffic.\n\n");
+/*
+*
+*  XSLT does not support BITWISE operators, so do it "old-school" style
+*  using real math :-)
+*/
+    var $dbits = $dmac6 mod 64;
+    var $dbits-comp = { call complement ($cnput = $dbits); }
+    var $sbits = $smac6 mod 64;
+    var $sbits-comp =  { call complement ($cnput = $sbits); }
+    var $hash = ($sbits * $dbits-comp) + ($sbits-comp * $dbits);
+/*
+*
+*  If z is not null, turn on debugging
+*
+*/
+    if ($z) {
+        <output> jcs:printf("SMAC6 %d...Sbits %d...Sbits-comp %d\n",$smac6,$sbits,$sbits-comp);
+        <output> jcs:printf("DMAC6 %d...Dbits %d...Dbits-comp %d\n",$dmac6,$dbits,$dbits-comp);
+    }
+    <output> jcs:printf("Traffic will use member link %d\n", $hash mod $members);
+}
+/*
+*   NAME: COMPLEMENT
+*   PURPOSE: To compute the and return the complement of the number
+*            input.
+*   CALLED: Before starting XOR math.
+*
+*   PARMS PASSED:
+*       $cnput = The number to derive the complement from
+*
+*/
+template complement ($cnput) {
+    if ($cnput < 10 ) {
+        expr 9 - $cnput;
+    }
+    else if ($cnput < 100) {
+        expr 99 - $cnput;
+    }
+    else if ($cnput < 1000) {
+        expr 999 - $cnput;
+    }
+    else if ($cnput < 10000) {
+        expr 9999 - $cnput;
+    }
+    else if ($cnput < 100000) {
+        expr 99999 - $cnput;
+    }
+    else {
+        expr 999999 - $cnput;
+    }
+}
+/*
+*   NAME: MAKE-HEX
+*   PURPOSE: To convert a HEX value in string format into a real HEX
+*            value.
+*   CALLED: By L2-HASH for each byte of a MAC address.
+*
+*   PARMS PASSED:
+*       $jnput = The byte of the MAC address needing to converted.
+*
+*/
+template make-hex( $jnput ) {
+    var $left = { 
+        if (substring($jnput,1,1) == "0") {
+            expr 0;
+        }
+        else if (substring($jnput,1,1) == "1") {
+            expr 16;
+        }
+        else if (substring($jnput,1,1) == "2") {
+            expr 32;
+        }
+        else if (substring($jnput,1,1) == "3") {
+            expr 48;
+        }
+        else if (substring($jnput,1,1) == "4") {
+            expr 64;
+        }
+        else if (substring($jnput,1,1) == "5") {
+            expr 80;
+        }
+        else if (substring($jnput,1,1) == "6") {
+            expr 96;
+        }
+        else if (substring($jnput,1,1) == "7") {
+            expr 112;
+        }
+        else if (substring($jnput,1,1) == "8") {
+            expr 128;
+        }
+        else if (substring($jnput,1,1) == "9") {
+            expr 144;
+        }
+        else if (substring($jnput,1,1) == "A" || substring($jnput,1,1) == "a") {
+            expr 160;
+        }
+        else if (substring($jnput,1,1) == "B" || substring($jnput,1,1) == "b") {
+            expr 176;
+        }
+        else if (substring($jnput,1,1) == "C" || substring($jnput,1,1) == "c") {
+            expr 192;
+        }
+        else if (substring($jnput,1,1) == "D" || substring($jnput,1,1) == "d") {
+            expr 208;
+        }
+        else if (substring($jnput,1,1) == "E" || substring($jnput,1,1) == "e") {
+            expr 224;
+        }
+        else if (substring($jnput,1,1) == "F" || substring($jnput,1,1) == "f") {
+            expr 240;
+        }
+    }
+    var $right = { 
+        if (substring($jnput,2,1) == "0") {
+            expr 0;
+        }
+        else if (substring($jnput,2,1) == "1") {
+            expr 1;
+        }
+        else if (substring($jnput,2,1) == "2") {
+            expr 2;
+        }
+        else if (substring($jnput,2,1) == "3") {
+            expr 3;
+        }
+        else if (substring($jnput,2,1) == "4") {
+            expr 4;
+        }
+        else if (substring($jnput,2,1) == "5") {
+            expr 5;
+        }
+        else if (substring($jnput,2,1) == "6") {
+            expr 6;
+        }
+        else if (substring($jnput,2,1) == "7") {
+            expr 7;
+        }
+        else if (substring($jnput,2,1) == "8") {
+            expr 8;
+        }
+        else if (substring($jnput,2,1) == "9") {
+            expr 9;
+        }
+        else if (substring($jnput,2,1) == "A" || substring($jnput,2,1) == "a") {
+            expr 10;
+        }
+        else if (substring($jnput,2,1) == "B" || substring($jnput,2,1) == "b") {
+            expr 11;
+        }
+        else if (substring($jnput,2,1) == "C" || substring($jnput,2,1) == "c") {
+            expr 12;
+        }
+        else if (substring($jnput,2,1) == "D" || substring($jnput,2,1) == "d") {
+            expr 13;
+        }
+        else if (substring($jnput,2,1) == "E" || substring($jnput,2,1) == "e") {
+            expr 14;
+        }
+        else if (substring($jnput,2,1) == "F" || substring($jnput,2,1) == "f") {
+            expr 15;
+        }
+    }
+    expr $left + $right;
+}

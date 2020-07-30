@@ -1,0 +1,212 @@
+/*
+*
+*    PURPOSE: Created for UVA to clear values 
+*             set for the jnxUtil MIB.
+*
+*    CREATED: 09/24/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 09/24/09
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "interface";
+        <description> "EX interface name";
+    }
+    <argument> {
+        <name> "debug";
+        <description> "Any none blank character turns on debugging";
+    }
+}
+
+
+param $interface;
+param $debug;
+
+/* Perform all operations over a single connection for speed increase */
+var $connection = jcs:open();
+
+/*
+*
+*   Used to make the Util MIB Instance unique
+*
+*/
+var $util-mib-instance-ID = "eum-";
+
+
+match / {
+    <op-script-results> {
+/*
+*
+*   If no PARM is passed to the script, process all interfaces
+*
+*/
+    if ($interface) {
+
+/*
+*
+*  Put the INTERFACE information into the UTIL MIB
+*
+*/
+        call util-mib-clear($name = $interface);
+    }
+    else {
+
+/*
+*
+*  RPC that returns the "show interface" output
+*
+*/
+        var $rpc-all = <get-interface-information> {
+            <extensive>;
+        }
+        var $physical-output-all = jcs:execute($connection, $rpc-all);
+            
+        for-each ($physical-output-all/physical-interface) {
+
+/*
+*
+*  Put the "current" INTERFACE information into the UTIL MIB
+*
+*/
+            call util-mib-clear($name = name);
+        }
+    }
+    
+    /* Close the connection */
+    expr jcs:close( $connection );
+    }
+}
+
+
+/*
+*   NAME: UTIL-MIB-CLEAR
+*   PURPOSE: Clear the interface attributes in the UTIL MIB Tree
+*   CALLED: Called for a specified interface or all interfaces
+*
+*   PARMS PASSED:
+*        $name = the interface name
+*
+*/
+template util-mib-clear($name) {
+    if ($debug) {
+        <output> jcs:printf("   Processing interface -> %s\n",$name); 
+
+    }
+    var $rpcN = <request-snmp-utility-mib-clear> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _ 1;
+        <object-type> "string";
+    }
+    var $rpcD = <request-snmp-utility-mib-clear> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _2;
+        <object-type> "string";
+    }
+    var $rpcS = <request-snmp-utility-mib-clear> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _3;
+        <object-type> "string";
+    }
+    var $rpcLPD = <request-snmp-utility-mib-clear> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _4;
+        <object-type> "string";
+    }
+    var $rpcLPS = <request-snmp-utility-mib-clear> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _5;
+        <object-type> "string";
+    }
+    var $rpcT = <request-snmp-utility-mib-clear> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _6;
+        <object-type> "string";
+
+    }
+    var $resN = jcs:execute($connection, $rpcN);
+    call verify-results ($results = $resN, $name = $name, $attribute = "NAME");
+    var $resD = jcs:execute($connection, $rpcD);
+    call verify-results ($results = $resN, $name = $name, $attribute = "DUPLEX");
+    var $resS = jcs:execute($connection, $rpcS);
+    call verify-results ($results = $resN, $name = $name, $attribute = "SPEED");
+    var $resLPD = jcs:execute($connection, $rpcLPD);
+    call verify-results ($results = $resN, $name = $name, $attribute = "LPDUPLEX");
+    var $resLPS = jcs:execute($connection, $rpcLPS);
+    call verify-results ($results = $resN, $name = $name, $attribute = "LPSPEED");
+    var $resT = jcs:execute($connection, $rpcT);
+    call verify-results ($results = $resN, $name = $name, $attribute = "TRUNK");
+
+}
+
+/*
+*   NAME: VERIFY-RESULTS
+*   PURPOSE: Checks the results from the jcs:invoke used to stuff
+*            the UTIL MIB.
+*   CALLED: Called after each request-snmp-utility-mib-set is 
+*           invoked.
+*
+*
+*   PARMS PASSED:
+*        $results = the structure returned from the jcs:invoke
+*        $name = the interface the jcs:invoke was called for
+*        $attribute = the interface attribute that was stuffed
+*
+*/
+template verify-results ($results, $name, $attribute) {
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = "ex-util-clear.slax[Warning]: ", $where = "s", $message = message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "ex-util-clear.slax[Error]: ", $where = "s", $message = message);
+            }
+        }
+        else {
+            var $message = "Successfully processed Util MIB for " _ $name _ " for attribute " _ $attribute;
+            call write-output($level = "user.info", $id = "INFO: ", $type = "ex-util-clear.slax[Success]: ", $where = "s", $message = $message);
+        }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify output location
+*                     s == syslog
+*                     t == terminal 
+*                     b == both
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "t") {
+        expr jcs:output($stdmessage);
+     }
+     else if ($where == "s") {
+        expr jcs:syslog($level, $type, $message);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}
+

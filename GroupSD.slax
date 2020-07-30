@@ -1,0 +1,176 @@
+/*
+*
+*    NAME: GroupSD.slax
+*    PURPOSE: Created to activate/deactivate
+*             a group hierarchy in any hierarchy 
+*             when a specified event occurs. 
+*
+*    CREATED: 12/26/10
+*    BY: Jay Wilson (Sr Consulting Engineer -- Americas)
+*    LAST MOD: 12/26/10
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script.
+*  This argument is by the event attribute "interface-name"
+*  when the event triggers.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "group";
+            <description> "Group to disable/enable";
+        }
+        <argument> {
+            <name> "event-type";
+            <description> "Event (up/down)";
+        }
+        <argument> {
+            <name> "hierarchy";
+            <description> "A valid Hierarchy level to apply the group to or the word top";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "True on debugging";
+        }
+}
+param $group;
+param $hierarchy;
+param $event-type;
+param $debug;
+
+var $con = jcs:open();
+
+match / {
+    <event-script-results> {
+        if ($group && $event-type) {
+            if (contains($event-type,"up")) {
+                call enable;
+            }
+            else {
+                call disable;
+            }
+        }
+        else {
+            expr jcs:syslog("user.warning", "GroupSD.slax[Warning]: ", "Missing a PARM(group event-type)");
+        }
+     }
+     expr jcs:close($con);
+}
+/*
+*   NAME: ENABLE
+*   PURPOSE: Set the group specificed
+*   CALLED: Called if the event-type contains the word "up"
+*
+*   PARMS PASSED:
+*
+*/
+template enable() {
+/*
+*
+*   XML structure for setting the group 
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <apply-groups> $group;
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            expr jcs:syslog("user.warning", "GroupSD.slax[Warning]: ", message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "GroupSD.slax[Error]: ", message);
+            }
+        }
+        else {
+            var $message = "Successfully set group=" _ $group;
+            expr jcs:syslog("user.info", "GroupSD.slax[Success]: ", $message); 
+        }
+}
+/*
+*   NAME: DISABLE
+*   PURPOSE: Delete the group specificed
+*   CALLED: Called if the event-type contains the word "down"
+*
+*   PARMS PASSED:
+*
+*/
+template disable() {
+/*
+*
+*   XML structure for deleting the group
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <apply-groups delete = "delete"> $group;
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            expr jcs:syslog("user.warning", "GroupSD.slax[Warning]: ", message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "GroupSD.slax[Error]: ", message);
+            }
+        }
+        else {
+            var $message = "Successfully deleted group=" _ $group;
+            expr jcs:syslog("user.info", "GroupSD.slax[Success]: ", $message);
+        }
+}
+
+

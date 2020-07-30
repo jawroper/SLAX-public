@@ -1,0 +1,177 @@
+/*
+*
+*    NAME: cp.slax
+*    PURPOSE: Copy any file off box to a remote host.
+*
+*
+*    CREATED: 11/08/11
+*    BY: Jay Wilson (Sr Consulting Eng. -- Americas)
+*    LAST MOD: 11/08/11
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "file";
+        <description> "File name to copy";
+    }
+    <argument> {
+        <name> "host";
+        <description> "Host to copy the file to";
+    }
+    <argument> {
+        <name> "uid";
+        <description> "User ID for the remote host";
+    }
+    <argument> {
+        <name> "pass";
+        <description> "Password for the remote host";
+    }
+    <argument> {
+        <name> "type";
+        <description> "Type of transfer (scp, ftp, http)";
+    } 
+    <argument> {
+        <name> "ofile";
+        <description> "Output file name";
+    } 
+    <argument> {
+        <name> "debug";
+        <description> "Any none blank character turns on debugging";
+    }
+}
+param $debug;
+param $file;
+param $host;
+param $uid;
+param $pass;
+param $type;
+param $ofile;
+
+match / {
+    <op-script-results> {
+        var $loctime = { call replace-all($text = $localtime-iso, $replace = " ", $by = "-"); }
+/*
+*
+*  Check all of the required Parms
+*
+*/
+    if ($file and $host and $type) {
+        var $of = { if ($ofile) {
+                        expr $ofile _ "-"_ $hostname _ $loctime;
+                    }
+                    else {
+                        expr $file _ "-" _ $hostname _ $loctime;
+                    }
+                  }
+        if (not($type == 'tftp')) {
+            if ($uid and $pass) {
+                call move-it($u = $uid, $p = $pass, $f = $of);
+            }
+            else {
+                call write-output($message = "Missing Script Arguments $uid or $pass");
+            }
+        }
+        else {
+            call move-it($u="anonymous", $p="junos-script", $f = $of);
+        }
+    }
+    else {
+        call write-output($message = "Missing a script argument $file, $host, or $type");
+    }
+}
+}
+/*
+*   NAME: MOVE-IT
+*   PURPOSE: To copy the file to the remote host
+*   CALLED: Call after a params have been verified
+*
+*   PARMS PASSED:
+*        $u = user id to use
+*        $p = password to use
+*        $f = output file name
+*
+*/
+template move-it($u, $p, $f) {
+    if ($debug) {
+        <output> jcs:printf("Processing the request.  Starting Move-it routine.\n");
+    }
+    var $to = $type _ "://" _ $u _ ":" _ $p _"@" _ $host _ "/" _ $f;
+    if ($debug) {
+        <output> jcs:printf("TO String --> %s\n",$to);
+    }
+    var $rpc2 = {
+        <file-copy> {
+            <source> $file;
+            <destination> $to;
+        }
+    }
+    var $result = jcs:invoke($rpc2);
+    if ($result//xnm:error) {
+        copy-of $result//xnm:error;
+    }
+    else if ($debug) {
+       <output> jcs:printf("   COPIED %s TO %s\n",$file,$to);
+    }
+}
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}
+/*
+*   NAME: REPLACE-ALL
+*   PURPOSE: To replace a string with another string
+*   CALLED: Call at the start of the program to remove
+*           the spaces from the value stored in $localtime
+*
+*   PARMS PASSED:
+*        $text    = varible that needs editing
+*        $replace = the string that needs replacing
+*        $by      = the replacement string
+*
+*/
+template replace-all ($text, $replace, $by) {
+    
+    if (contains($text, $replace)) {
+        expr substring-before($text, $replace);
+        expr $by;
+        call replace-all($text = substring-after($text, $replace), $replace, $by);
+    
+    } else {
+        expr $text;
+    }
+}

@@ -1,0 +1,244 @@
+/*
+*
+*    NAME: RTG-CLEAR.slax
+*    PURPOSE: Created for PIMA CC to modify the behavior
+*             of RTG when multiple rapid link-state changes
+*             occur on the primary link
+*
+*    CREATED: 08/14/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 08/14/09
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/ 
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+/*
+*
+*  Define the argument that will be passed into the script.
+*  This argument is by the event attribute "interface-name"
+*  when the event triggers.
+*
+*/
+var $arguments = {
+    <argument> {
+        <name> "ifname";
+        <description> "Interface that triggered the event.";
+    }
+    <argument> {
+        <name> "RTGifname";
+        <description> "Interface being used for as the RTG interface.";
+    }
+    <argumnet> {
+        <name> "PRMifname";
+        <description> "Interface being used as the primary interface.";
+    }
+}
+param $ifname;
+param $RTGifname;
+param $PRMifname;
+
+/*
+*
+*   debug1 -> Highlevel debugging
+*   debug7 -> Lowlevel debugging
+*   0 == off 
+*   1 == on
+*
+*/
+var $debug1 = "0";
+var $debug7 = "0";
+
+match / {
+/*
+*
+*   Get the MAC table from the switch
+*
+*/
+    if (not($RTGifname) || not($PRMifname) || not($ifname)) {
+        call write-it($message = "Missing a parm -- ifname, RTGifname, or PRMifname");
+    }
+    else if ( $RTGifname == $PRMifname) {
+        call write-it($message = "RTGifname & PRMifname must be different.");
+    }
+    else if ( $ifname == $RTGifname) {
+        call clear-prm;
+    }
+    else if ( $ifname == $PRMifname) {
+        call clear-rtg;
+    }
+    else if ($debug1 == 1) {
+        var $strg = "ifname " _ $ifname _ " does not match RTGifname " _ $RTGifname _ " or PRMifname " _ $PRMifname;
+        call debug ( $type = "w", $on = $debug1, $output = $strg);
+    }
+}
+/*
+*   NAME: CLEAR-PRM
+*   PURPOSE: Place holder increase some type of processing
+*            is need when the RTG ifname does down.
+*
+*   PARMS PASSED:
+*
+*/
+template clear-prm {
+    call write-it($message = "In the clear-prm routine.");
+}  
+/*
+*   NAME: CLEAR-RTG
+*   PURPOSE: Disable & Enable the RTG link.
+*   WHY: When the primary comes back up, the RTG link
+*        does not lose link by default.  It just clears
+*        the tables.  To allow down stream switches 
+*        to clear their tables, the RTG link needs to
+*        lose link.  This will allow the neighbor to 
+*        trigger an event policy that will clear it's
+*        tables for that link.
+*
+*   PARMS PASSED:
+*
+*/
+template clear-rtg {
+    call if-dea-act ($interface = $RTGifname, $type = "d");
+    call if-dea-act ($interface = $RTGifname, $type = "a");
+}
+
+/*
+*
+*    NAME: if-dea-act.slax
+*    PURPOSE: To disable an interface from an OP or 
+*             EVENT script.
+*    CALLED; When the primary interface of an RTG
+*            transitions to link-up.
+*
+*    PARMS PASSED:
+*         $interface = The interface to disable.
+*         $type = "d" means to deactivate the interface
+*                 "a" means to activate the interface
+*
+*/     
+template if-dea-act ($interface,$type) {
+/*
+*
+*   Open a connection with mgd
+*
+*/
+        var $con = jcs:open();
+        if (not($con)) {
+            call write-it($message = "Not able to connect to local mgd");
+        }
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <interface> {
+                         <name> $interface;
+                         if ($type = "d") {
+                             <disable>;
+                         }
+                         else if ($type = "a") {
+                             <disable delete="delete">;
+                         }
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            call write-it($message = message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                call write-it( $message = message);
+            }
+        }
+        else {
+            var $message = { if ($type = "d") { 
+                                expr "Successfully deactivated the interface " _ $interface;
+                             }
+                             else if ($type = "a") {
+                                expr "Successfully activated the interface " _ $interface;
+                             }
+                             else {
+                                expr "if-dea-act has a bad parm!";
+                             }
+                           }
+            call write-it($message = $message);
+        }
+
+/*
+*
+*   Close the mgd connection
+*
+*/
+        expr jcs:close($con); 
+}
+
+/*
+*   NAME: WRITE-IT
+*   PURPOSE: Writes a message to SYSLOG that is passed to it.
+*   CALLED: Can be called at any time from any where.
+*
+*   PARMS PASSED:
+*        $message = The string to print out 
+*
+*/
+template write-it($message) {
+    expr jcs:syslog("user.warn","RTG-CLEAR.slax:  ",$message);
+}
+
+/*
+*   NAME: DEBUG
+*   PURPOSE: Writes debugging information to SYSLOG.
+*   CALLED: Can be called at any time from any where.
+*
+*   PARMS PASSED:
+*        $type = indicates the type of information
+*                being passed in.  An "r" means the
+*                information is a node-set result.
+*        $on = turns on writing it or not
+*        $output = the string that needs to be
+*                  printed
+*
+*/
+template debug ( $type, $on, $output) {
+    if ($on == "1") {
+        if ($type == "r" ) {
+            for-each( $output ) {
+                call write-it($message = . );
+            }
+        }
+        else {
+            call write-it($message = $output);
+        }
+    }
+}
+

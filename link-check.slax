@@ -1,0 +1,167 @@
+/*
+*
+*    NAME: link-check.slax
+*    PURPOSE: Created for Robert Half to detect the state of an
+*             up-stream link.
+*               When DOWN is detected the primary Firewall Filter
+*                  is deactivated.
+*               When UP is detected the primary Firewall Filter is
+*                  activated. 
+*
+*    CREDITS: This is a modified version Jay Wilson's shut.slax script.  
+*
+*
+*    CREATED: 06/03/09
+*    BY: Barrymore Simon
+*    LAST MOD: 06/04/09
+*    BY: Jay Wilson
+*    VERSION: 2.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V2.00 = Added activate/deactivate logic
+*                Added messaging routine
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+/*
+*
+*   Parms that are passed in from the configuration or cli
+*
+*/
+var $arguments = {
+    <argument> {
+        <name> "filter";
+        <description> "Firewall Filter Name";
+    }
+    <argument> {
+        <name> "term";
+        <description> "Firewall Filter Term Name";
+    }
+    <argument> {
+        <name> "action";
+        <description> "What to do (activate/deactivate)";
+    }
+}
+param $filter;
+param $term;
+param $action;
+
+match / {
+
+    if ($filter and $term and $action) {
+
+/*
+*
+*   Open a connection with mgd
+*
+*/
+        var $con = jcs:open();
+        if (not($con)) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = "link-check.slax[Error]: ", $where = "b", $message = "Not able to connect to local mgd");
+        }
+/*
+*
+*   XML structure for activating/deactivating the primary firewall filter
+*
+*/
+        var $xml = {
+            <configuration> {
+                <firewall> {
+                    <family> {
+                        <inet> {
+                            <filter> {
+                                <name> $filter;
+                                if ($action == "activate") {
+                                    <term inactive=""> {
+                                        <name> $term;
+                                    }
+                                }
+                                else {
+                                    <term inactive="inactive"> {
+                                        <name> $term;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                 }
+             }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = "link-check.slax[Warning]: ", $where = "b", $message = message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "link-check.slax[Error]: ", $where = "b", $message = message);
+            }
+        }
+        else {
+            call write-output($level = "user.info", $id = "INFO: ", $type = "link-check.slax[Success]: ", $where = "b", $message = "Successfully processed the FF");
+        }
+
+/*
+*
+*   Close the mgd connection
+*
+*/
+        expr jcs:close($con);
+
+    }
+    else {
+        call write-output($where = "s", $message = "Missing Script Arguments");
+    } 
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}

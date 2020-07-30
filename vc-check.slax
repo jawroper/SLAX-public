@@ -1,0 +1,228 @@
+/*
+*
+*    NAME: vc-check.slax
+*    PURPOSE: Created to determine if a VC member has been
+*             removed from a VC and if so, generate a message.
+*
+*
+*    CREATED: 05/28/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 05/31/09
+*    BY: Jay Wilson
+*    VERSION: 1.10
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Added ability to pass in the trap message
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ns exsl = "http://exslt.org/common";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "debug";
+        <description> "Any character turns on debugging (5 = detail)";
+    }
+    <argument> {
+        <name> "message";
+        <description> "Message for the SNMP trap that will be sent";
+    }
+    <argument> {
+        <name> "syslog";
+        <description> "Any none blank character will cause a message to be written to syslog";
+    }
+}
+param $debug;
+param $message;
+param $syslog;
+
+var $connection = jcs:open();
+
+match / {
+    <op-script-results> {
+/*
+*
+*  Validate the message string and make it SNMP ready
+*
+*/
+        var $clean-message = {
+            call escape-string($text=$message, $vec = '[] =,');
+        }
+/*
+*
+*  RPC that returns the "show virtual-chassis" output
+*
+*/
+        var $rpc = {
+            <get-virtual-chassis-information>; 
+        }
+        var $switch-output = jcs:execute($connection,$rpc);
+        var $top-vc = $switch-output;
+        if ($debug == 5) {
+            call jcs:dump($out=$switch-output,$style="<>");
+        }
+/*
+*
+*    Any status other than Prsnt will generate the message
+*
+*/
+            for-each ($switch-output/member-list/member) {
+                if (member-status != "Prsnt") {
+                    var $write = "Member " _ member-id _ " is not present!";
+                    if ($debug) {
+                        expr jcs:output($write);
+                    }
+                    if ($syslog) {
+                        expr jcs:syslog("user.error","vc-check.slax[ERROR]",$write);
+                    }
+/*
+*
+*    Generate the trap and if a MESSAGE was passed in use it.
+*
+*/
+                    var $emessage = "jnxEventTrapDescr[0]='Event-Trap' , jnxEventAvAttribute[0]='event' , jnxEventAvValue[0]='VC_MEMBER_DOWN' , jnxEventAvAttribute[2]='member' , jnxEventAvValue[2]='" _ member-id _  "' , jnxEventAvAttribute[3]='message' , " _ "jnxEventAvValue[3]='" _ $clean-message _ "'";
+                    if ($debug) {
+                       expr jcs:output($emessage);
+                    } 
+                    var $rpcc = <request-snmp-generate-trap> {
+                               <trap> "jnxEventTrap";
+                               <variable-bindings> $emessage;
+                    }
+                    var $snmp-gen-output = jcs:execute($connection,$rpcc);
+                    if ($debug == 5) {
+                       call jcs:dump($out=$snmp-gen-output,$style="<>");
+                    }
+                }
+            }
+    expr jcs:close($connection);
+    }
+}
+/*
+*   NAME: DUMP
+*   PURPOSE: Print the output from a RPC
+*   CALLED: Called by PING-LOOP if debug is set to 5
+*
+*   PARMS PASSED:
+*        $out = what varible to display
+*        $style = "<>" means XML, empty means JUNOS
+*        $name = a string that is prepended to any output
+*        $indent = spacing between $name and output
+*/
+template jcs:dump ($name, $out, $indent = "", $style)
+{
+    var $mydent = {
+        if ($name) {
+            expr $indent _ "  ";
+        } else {
+            expr $indent;
+        }
+    }
+    if ($name) {
+        expr jcs:output($indent, $name, " = {");
+    }
+    var $oq = {
+        if ($style == "<>") {
+            expr "<";
+        }
+    }
+    var $cq = {
+        if ($style == "<>") {
+            expr ">";
+        }
+    }
+
+    if (exsl:object-type($out) == "string") {
+        expr jcs:output($mydent, "'", $out, "';");
+
+    } else if (name($out)) {
+        var $text = $out/text();
+
+        if ($out/ *) {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+
+        } else if ($text) {
+            if (string-length($out) == 1 && starts-with($out, "\n")) {
+                expr jcs:output($mydent, $oq, name($out), $cq, ";");
+            } else {
+                expr jcs:output($mydent, $oq, name($out), $cq,
+                                " '", $text, "';");
+            }
+
+        } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+            expr jcs:output($mydent, $oq, name($out), $cq, ";");
+        } else {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+        }
+
+    } else if ($out/node()) {
+        for-each ($out/ *) {
+            call jcs:dump($out = ., $indent = $mydent);
+        }
+
+    } else if ($out/text()) {
+        expr jcs:output($mydent, .);
+    }
+
+    if ($name) {
+        expr jcs:output($indent, "}");
+    }
+}
+/*
+*
+*  Developed by Phil S.
+*
+*/
+template escape-string ($text, $vec) {
+
+    if (jcs:empty($vec)) {
+        expr $text;
+
+    } else {
+        var $index = 1;
+        var $from = substring($vec, $index, 1);
+        var $changed-value = {
+            call replace-string($text, $from) {
+                with $to = {
+                    expr "\\";
+                    expr $from;
+                 }
+            }
+        }
+
+        call escape-string($text = $changed-value, $vec = substring($vec, $index
+ + 1));
+    }
+}
+/*
+*
+*   Developed by Phil S.
+*
+*/
+template replace-string ($text, $from, $to) {
+
+    if (contains($text, $from)) {
+        var $before = substring-before($text, $from);
+        var $after = substring-after($text, $from);
+        var $prefix = $before _  $to;
+
+        expr $before;
+        expr $to;
+        call replace-string($text = $after, $from, $to);
+
+    } else {
+        expr $text;
+    }
+}

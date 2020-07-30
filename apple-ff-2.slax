@@ -1,0 +1,172 @@
+root> exit 
+
+root@:RE:0% cat apple.slax
+/*
+*
+*    NAME: apple-ff.slax
+*    PURPOSE: Created for Apple to responded to an RPM failure
+*             by installing a FF.
+*
+*    CREATED: 07/13/11
+*    BY: Jay Wilson
+*    LAST MOD: 07/13/11
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+/*
+*
+*   Parms that are passed in from the configuration or cli
+*
+*/
+var $arguments = {
+    <argument> {
+        <name> "ff";
+        <description> "Name of the FF to install";
+    }
+    <argument> {
+        <name> "interface";
+        <description> "Interface to apply the FF to";
+    }
+    <argument> {
+        <name> "debug";
+        <description> "Any non-blank character will turn on debug";
+    }
+}
+param $ff;
+param $interface;
+param $debug;
+
+match / {
+    <event-script-results> {
+
+    if ($ff and $interface) {
+/*
+*
+*   Check to see if the ff has already been applied.
+*     0 = false / 1 = true
+*
+*/
+        var $exists = 0;
+        if ($exists == 0) {
+
+/*
+*
+*   Open a connection with mgd
+*
+*/
+            var $con = jcs:open();
+            if (not($con)) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "APPLE-FF.slax[Error]: ", $where = "b", $message = "Not able to connect to local mgd");
+            }
+/*
+*
+*   XML structure for adding the FF
+*
+*/
+            var $xml = {
+               <configuration> {
+                    <interfaces> {
+                        <interface> {
+                            <name> $interface;
+                               <unit> {
+                                  <name> "0";
+                                     <family> {
+                                        <inet> {
+                                           <filter delete="delete">;
+                                        }
+                                     }
+                               }
+                        }
+                     }
+                     <event-options> {
+                         <policy> {
+                             <name> "apple";
+                             <events> "PING_TEST_FAILED";
+                             <events delete="delete"> "PING_TEST_COMPLETED";
+                         }
+                     }
+                }
+            }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+            var $results := {
+                call jcs:load-configuration($connection = $con, $configuration = $xml);
+            }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+            for-each ($results//xnm:warning) {
+                if (not(contains(message,"statement not found:"))) {
+                    call write-output($level = "user.warning", $id = "WARNING: ", $type = "APPLE-FF.SLAX[Warning]: ", $where = "b", $message = message);
+                }
+            }
+            if ($results//xnm:error) {
+                for-each ($results//xnm:error) {
+                    call write-output($level = "user.error", $id = "ERROR: ", $type = "APPLE-FF.SLAX[Error]: ", $where = "b", $message = message);
+                }
+            }
+            else {
+                call write-output($level = "user.info", $id = "INFO: ", $type = "APPLE-FF.SLAX[Success]: ", $where = "b", $message = "Successfully processed the filter removal");
+            }
+
+/*
+*
+*   Close the mgd connection
+*
+*/
+            expr jcs:close($con);
+
+        }
+    }
+    else {
+        call write-output($where = "s", $type = "APPLE-FF.SLAX[Info]: ", $message = "Missing Script Arguments");
+    } 
+    }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+}

@@ -1,0 +1,327 @@
+/*
+*
+*    NAME: clear-flow.slax
+*    PURPOSE: To allow the user to clear flows on an SRX for a specific
+*             set of IP addresses.
+*
+*    CREATED: 06/12/13
+*    BY: Jay Wilson (Sr Con Eng -- AMER AT DC)
+*    LAST MOD: 06/12/13
+*    BY: Jay Wilson
+*    VERSION: 1.01
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.01 = Added logic to allow for a single 
+*                IP to be specified
+*
+*/
+/*
+*
+*  Define the argument that will be passed into the script
+*  when specific events trigger.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "fnum";
+            <description> "Flow session to clear";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "Turn on debugging";
+        }
+        <argument> {
+            <name> "ip";
+            <description> "IP range. Must use a - between the start and end addresses";
+        }
+}
+param $fnum;
+param $debug;
+param $ip;
+
+var $con = jcs:open();
+
+match / {
+    <op-script-results> {
+        if ((contains($ip,"-") && string-length($ip) >= 15) || (contains($ip,"*") && string-length($ip) >=8)) {
+            call main;
+        }
+        else {
+            call write-output($id="CLEAR-FLOW:",$message="Invalid params passed.", $where="s");
+        }
+    }
+}
+template main {
+/*
+*
+*    process the IP range
+*
+*/
+        var $fromIP = {
+                        if (contains($ip,"-")) {
+                            expr substring-before($ip,"-");
+                        }
+                        else {
+                            expr substring-before($ip,"*");
+                        }
+                      }
+        var $toIP = {
+                      if (contains($ip,"-")) {
+                          expr substring-after($ip,"-");
+                      }
+                      else {
+                          expr $fromIP;
+                      }
+                    }
+        var $fromIPo1 = substring-before($fromIP,".");
+        var $fromIPr1 = substring-after($fromIP,".");
+        var $fromIPo2 = substring-before($fromIPr1,".");
+        var $fromIPr2 = substring-after($fromIPr1,".");
+        var $fromIPo3 = substring-before($fromIPr2,".");
+        var $fromIPo4 = substring-after($fromIPr2,".");
+        var $toIPo1 = substring-before($toIP,".");
+        var $toIPr1 = substring-after($toIP,".");
+        var $toIPo2 = substring-before($toIPr1,".");
+        var $toIPr2 = substring-after($toIPr1,".");
+        var $toIPo3 = substring-before($toIPr2,".");
+        var $toIPo4 = substring-after($toIPr2,".");
+        if ($debug) {
+            var $msg-f = "FROM IP:" _ $fromIP _ " O1:" _ $fromIPo1 _ " O2:" _ $fromIPo2 _ " O3:" _ $fromIPo3 _ " O4:" _ $fromIPo4;
+            call write-output($message = $msg-f, $where="s");
+            var $msg-t = "  TO IP:" _ $toIP _ " O1:" _ $toIPo1 _ " O2:" _ $toIPo2 _ " O3:" _ $toIPo3 _ " O4:" _ $toIPo4;
+            call write-output($message = $msg-t, $where="s");
+        }
+/*
+*
+*    Get the flow session information
+*
+*/
+    var $rpc = <get-flow-session-information>;
+    var $flows = jcs:execute($con,$rpc);
+    if ($debug == 5) {
+        call jcs:dump($out=$flows,$style="<>");
+    }
+/*
+*
+*    Process each host address
+*
+*/
+        if ($fromIPo1 == $toIPo1) {
+            if ($fromIPo2 == $toIPo2) {
+                if ($fromIPo3 == $toIPo3) {
+                   if ($fromIPo4 > $toIPo4) {
+                       call write-output($message = "Invalid range. Fourth Octet.", $where="s");
+                   }
+                  else {
+                      for-each($flows/flow-session) {
+                          var $fsid = ./session-identifier;
+                          for-each(./flow-information) {
+                              var $fsa = ./source-address;
+                              call oct4($level=4,$prefix= $fromIPo1 _ "." _ $fromIPo2 _ "." _ $fromIPo3, $shost=$fromIPo4, $ehost=$toIPo4, $fsid=$fsid, $fsa=$fsa);
+                          }
+                       }
+                   }
+                }
+                else {
+                    /*********************************************
+                     *    future use                             *
+                     *********************************************/
+                    call write-output($message = "O3 processing currently not available.", $where = "s");
+                }
+            }
+            else {
+                /*********************************************
+                 *    future use                             *
+                 *********************************************/
+                call write-output($message = "O2 processing currently not available.", $where = "s");
+            }
+        }
+        else {
+            /*********************************************
+            *    future use                             *
+            *********************************************/
+            call write-output($message = "O1 processing currently not available.", $where = "s");
+        }
+     expr jcs:close($con);
+}
+/*
+*   NAME: OCT4
+*   PURPOSE: Call to process the fourth Octet of addresses.
+*   CALLED: Called whenever the fouth Octet is ready to be processed.
+*
+*
+*   PARMS PASSED:
+*        $level = Where it was called from. 
+*                 4 means the first 3 octets are the same
+*                 1 means several octets are different  
+*        $shost = IP of the host to start with. only used
+*                 if $level = 4
+*        $ehost = IP of the host to end with
+*        $fsid  = SessionID to scan
+*        $fsa   = Source address of a flow that currently exists
+*                 for the session in $fsid
+*
+*   Assumption is that flows are symetrical. meaning that IPs for
+*   source and destination swap for IN vs OUT. This means we only
+*   need to check the source-address in each direction for a each
+*   sessionID.
+*
+*/
+template oct4($level,$shost=1,$ehost=255,$prefix,$fsid,$fsa,$fda) {
+    if ($shost <= $ehost) {
+        var $address = $prefix _ "." _ $shost;
+        if ($debug) {
+           call write-output($message = "O4...Current Host = " _ $address, $where = "s");
+        }
+        if ($address == $fsa) {
+/*
+            call write-output($message = "Kill session: " _ $fsid _ " for IP: " _ $fsa);
+*/
+            var $cmd-rpc = <clear-flow-session-by-session-identifier> {
+                <session-identifier>$fsid;
+            }
+            var $cmd-out = jcs:execute($con, $cmd-rpc);
+            call verify-results($results = $cmd-out,$name = $fsid,$ip=$fsa);
+        }
+        call oct4($level=$level, $shost = $shost + 1, $ehost=$ehost, $prefix=$prefix);
+    }
+}
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called whenever a message needs to be writing to the screen,
+*           syslog, or both.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+}
+/*
+*   NAME: VERIFY-RESULTS
+*   PURPOSE: Checks the results from the jcs:execute used to
+*            process the "clear" rpc
+*   CALLED: Called after each "clear" rpc
+*
+*
+*   PARMS PASSED:
+*        $results = the structure returned from the jcs:invoke
+*        $name = flow sessionID the jcs:execute was called for
+*        $ip = the IP address that was process
+*
+*/
+template verify-results ($results, $name, $ip) {
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = "clear-flow.slax[Warning]: ", $where = "s", $message = message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "clear-flow.slax[Error]: ", $where = "s", $message = message);
+            }
+        }
+        else {
+            var $message = "Successfully processed sessionID " _ $name _ " for IP " _ $ip;
+            call write-output($level = "user.info", $id = "INFO: ", $type = "clear-flow.slax[Success]: ", $where = "s", $message = $message);
+        }
+}
+/*
+*   NAME: DUMP
+*   PURPOSE: Print the output from a RPC
+*   CALLED: Called by PING-LOOP if debug is set to 5
+*
+*   PARMS PASSED:
+*        $out = what varible to display
+*        $style = "<>" means XML, empty means JUNOS
+*        $name = a string that is prepended to any output
+*        $indent = spacing between $name and output
+*/
+template jcs:dump ($name, $out, $indent = "", $style)
+{
+    var $mydent = {
+        if ($name) {
+            expr $indent _ "  ";
+        } else {
+            expr $indent;
+        }
+    }
+    if ($name) {
+        expr jcs:output($indent, $name, " = {");
+    }
+    var $oq = {
+        if ($style == "<>") {
+            expr "<";
+        }
+    }
+    var $cq = {
+        if ($style == "<>") {
+            expr ">";
+        }
+    }
+
+    if (exsl:object-type($out) == "string") {
+        expr jcs:output($mydent, "'", $out, "';");
+
+    } else if (name($out)) {
+        var $text = $out/text();
+
+        if ($out/ *) {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+
+        } else if ($text) {
+            if (string-length($out) == 1 && starts-with($out, "\n")) {
+                expr jcs:output($mydent, $oq, name($out), $cq, ";");
+            } else {
+                expr jcs:output($mydent, $oq, name($out), $cq,
+                                " '", $text, "';");
+            }
+
+        } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+            expr jcs:output($mydent, $oq, name($out), $cq, ";");
+        } else {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+        }
+
+    } else if ($out/node()) {
+        for-each ($out/ *) {
+            call jcs:dump($out = ., $indent = $mydent);
+        }
+
+    } else if ($out/text()) {
+        expr jcs:output($mydent, .);
+    }
+
+    if ($name) {
+        expr jcs:output($indent, "}");
+    }
+}

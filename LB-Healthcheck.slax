@@ -1,0 +1,247 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1138
+{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+\margl1440\margr1440\vieww23300\viewh13340\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural
+
+\f0\fs24 \cf0 \
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural
+
+\b \cf0 RPM configuration:
+\b0 \
+\
+services \{\
+rpm \{\
+probe LB \{\
+test LB1_status \{\
+probe-type icmp-ping;\
+target address <LB_IP>;\
+probe-count 3;\
+probe-interval 1;\
+test-interval 10;\
+\}\
+\}\
+\}\
+\}\
+\
+\
+\pard\pardeftab720\sl181
+
+\b \cf0 Event Configuration:
+\b0 \
+\
+event-options \{\
+policy LB1_down \{\
+events ping_test_failed;\
+within 10 \{\
+trigger on 1;\
+\}\
+attributes-match \{\
+ping_test_failed.test-owner matches \'93^LB$\'94;\
+ping_test_failed.test-name matches \'93^LB1_status$\'94;\
+\}\
+then \{\
+event-script LB-Healthcheck.slax \{\
+arguments \{\
+filter LB_forwarding;\
+term LB1;\
+action inactive;\
+\}\
+\}\
+\}\
+\}\
+policy LB1_up \{\
+events ping_test_completed;\
+within 20 \{\
+trigger on 1;\
+\}\
+attributes-match \{\
+ping_test_completed.test-owner matches \'93^LB$\'94;\
+ping_test_completed.test-name matches \'93^LB1_status$\'94;\
+\}\
+then \{\
+event-script LB-Healthcheck.slax \{\
+arguments \{\
+filter LB_forwarding;\
+term LB1;\
+action active;\
+\}\
+\}\
+\}\
+\}\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural
+\cf0 \
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural
+
+\b \cf0 SLAX Script:
+\b0 \
+\
+/*\
+* NAME: LB-Healthcheck.slax\
+* PURPOSE: Created to detect the state of link\
+* When DOWN is detected the traffic redirecting term in the Firewall Filter is deactivated.\
+* When UP is detected the traffic redirecting term in the Firewall Filter is activated.\
+*\
+*\
+* CREATED: 06/09/11\
+* BY: Prash\
+*/\
+version 1.0;\
+ns junos = \'93http://xml.juniper.net/junos/*/junos\'94;\
+ns xnm = \'93http://xml.juniper.net/xnm/1.1/xnm\'94;\
+ns jcs = \'93http://xml.juniper.net/junos/commit-scripts/1.0\'94;\
+import \'93../import/junos.xsl\'94;\
+/*\
+*\
+* Parms that are passed in from the configuration or cli\
+*\
+*/\
+var $arguments = \{\
+<argument> \{\
+<name> \'93filter\'94;\
+<description> \'93Firewall Filter Name\'94;\
+\}\
+<argument> \{\
+<name> \'93term\'94;\
+<description> \'93Firewall Filter Term Name\'94;\
+\}\
+<argument> \{\
+<name> \'93action\'94;\
+<description> \'93What to do (active/inactive)\'94;\
+\}\
+\}\
+param $filter;\
+param $term;\
+param $action;\
+match / \{\
+var $check-route = jcs:invoke (\'93get-configuration\'94);\
+var $tt = $check-route/firewall/family/inet/filter[name=$filter]/term[name=$term];\
+/*\
+*\
+* conditional statement to check if config is different from action. * ie. config is inactive and action active\
+*\
+*/\
+if ( (not($tt[@inactive]) and $action == \'93inactive\'94) || ($tt[@inactive] and $action == \'93active\'94)) \{\
+if ($filter and $term and $action) \{\
+/*\
+*\
+* Open a connection with mgd. use config private\
+*\
+*/\
+var $con = jcs:open();\
+var $open = <open-configuration> \{\
+<private>;\
+\}\
+var $result = jcs:execute( $con, $open );\
+if (not($con)) \{\
+call write-output($level = \'93user.error\'94, $id = \'93ERROR: \'93, $type = \'93LB-Healthcheck.slax[Error]: \'93, $where = \'93b\'94, $message = \'93Not able to connect to local mgd\'94);\
+\}\
+/*\
+*\
+* XML structure for activating/deactivating the primary firewall\
+* filter\
+*\
+*/\
+var $xml = \{\
+<configuration> \{\
+<firewall> \{\
+<family> \{\
+<inet> \{\
+<filter> \{\
+<name> $filter;\
+if ($action == \'93active\'94) \{\
+<term active=\'94active\'94> \{\
+<name> $term;\
+\}\
+\}\
+if ($action == \'93inactive\'94) \{\
+<term inactive=\'94inactive\'94> \{\
+<name> $term;\
+\}\
+\}\
+\}\
+\}\
+\}\
+\}\
+\}\
+\}\
+/*\
+*\
+* Use load-configuration template defined in junos.xsl to load and\
+* commit the configuration.\
+*\
+*/\
+var $private-results = jcs:execute( $con, $open );\
+var $load-configuration = <load-configuration> \{\
+copy-of $xml;\
+\}\
+var $results = jcs:execute( $con, $load-configuration );\
+var $commit-configuration = <commit-configuration>;\
+var $commit-results = jcs:execute( $con, $commit-configuration );\
+/*\
+*\
+* Use load-configuration template defined in junos.xsl to load and\
+* commit the configuration\
+*\
+*/\
+/*\
+*\
+* Close the mgd connection\
+*\
+*/\
+var $close-private = <close-configuration>;\
+var $close-configuration-results = jcs:execute( $con, $close-private );\
+var $close-results = jcs:close( $con);\
+/*\
+*\
+* Check the results and process them\
+*\
+*/\
+for-each ($results//xnm:warning) \{\
+if (not(contains(message,\'94statement not found:\'94))) \{\
+call write-output($level = \'93user.warning\'94, $id = \'93WARNING: \'93, $type = \'93LB-Healthcheck.slax[Warning]: \'93, $where = \'93b\'94, $message = message);\
+\}\
+\}\
+if ($results//xnm:error) \{\
+for-each ($results//xnm:error) \{\
+call write-output($level = \'93user.error\'94, $id = \'93ERROR: \'93, $type = \'93LB-Healthcheck.slax[Error]: \'93, $where = \'93b\'94, $message = message);\
+\}\
+\}\
+else \{\
+call write-output($level = \'93user.info\'94, $id = \'93INFO: \'93, $type = \'93LB-Healthcheck.slax[Success]: \'93, $where = \'93b\'94, $message = \'93Successfully processed the FF\'94);\
+\}\
+\}\
+else \{\
+call write-output($where = \'93s\'94, $message = \'93Missing Script Arguments\'94);\
+\}\
+\}\
+\}\
+\
+/*\
+* NAME: WRITE-OUTPUT\
+* PURPOSE: Writes a message to standard and/or the syslog depending on the params passed to it**\
+* CALLED: Called after the XML changes have been submitted to MGD process**\
+* PARAMS PASSED:\
+* $level = The syslog message level\
+* $id = Standout message ID\
+* $type = The string identifying the type of message\
+* $message = The string to print out\
+* $where = Used to specify if \'93b\'94oth STDOUT and SYSLOG\
+* should be written to or only \'93S\'94TDOUT\
+*\
+*/\
+template write-output($level = \'93user.info\'94, $id = \'93INFO: \'93, $type = \'93 \'93, $where =\
+\'93b\'94, $message) \{\
+var $stdmessage = $id _ $message;\
+if ($where == \'93s\'94) \{\
+expr jcs:output($stdmessage);\
+\}\
+else \{\
+expr jcs:syslog($level, $type, $message);\
+expr jcs:output($stdmessage);\
+\}\
+\}\
+\
+}

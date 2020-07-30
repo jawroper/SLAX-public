@@ -1,0 +1,239 @@
+/*
+*
+*    NAME: apple-fbf.slax
+*    PURPOSE: Created for Apple to responded to an RPM failure
+*             by installing a FBF.
+*
+*    CREATED: 07/13/11
+*    BY: Jay Wilson
+*    LAST MOD: 07/13/11
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+/*
+*
+*   Parms that are passed in from the configuration or cli
+*
+*/
+var $arguments = {
+    <argument> {
+        <name> "fbf";
+        <description> "Name of the FBF to install";
+    }
+    <argument> {
+        <name> "interface";
+        <description> "Interface to apply the FBF to";
+    }
+    <argument> {
+        <name> "debug";
+        <description> "Any non-blank character will turn on debug";
+    }
+}
+param $fbf;
+param $interface;
+param $debug;
+
+match / {
+    <event-script-results> {
+
+    if ($fbf and $interface) {
+/*
+*
+*   Check to see if the fbf has already been applied.
+*     0 = false / 1 = true
+*
+*/
+/*        var $exists = { call check-existance;
+*                      }
+*/
+          var $exists = 0;
+        if ($exists == 0) {
+
+/*
+*
+*   Open a connection with mgd
+*
+*/
+            var $con = jcs:open();
+            if (not($con)) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "link-check.slax[Error]: ", $where = "b", $message = "Not able to connect to local mgd");
+            }
+/*
+*
+*   XML structure for adding the FBF
+*
+*/
+            var $xml = {
+               <configuration> {
+                    <interfaces> {
+                        <interface> {
+                            <name> $interface;
+				<unit> "0" {
+					<family> {
+						<inet> {
+							<filter> {
+								<input> {
+									<name> $fbf;
+								}
+							}
+						}
+					}
+				}
+			}
+		     }
+		}
+	    }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+            var $results := {
+                call jcs:load-configuration($connection = $con, $configuration = $xml);
+            }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+            for-each ($results//xnm:warning) {
+                if (not(contains(message,"statement not found:"))) {
+                    call write-output($level = "user.warning", $id = "WARNING: ", $type = "APPLE-FBF.SLAX[Warning]: ", $where = "b", $message = message);
+                }
+            }
+            if ($results//xnm:error) {
+                for-each ($results//xnm:error) {
+                    call write-output($level = "user.error", $id = "ERROR: ", $type = "APPLE-FBF.SLAX[Error]: ", $where = "b", $message = message);
+                }
+            }
+            else {
+                call write-output($level = "user.info", $id = "INFO: ", $type = "APPLE-FBF.SLAX[Success]: ", $where = "b", $message = "Successfully processed the static route");
+            }
+
+/*
+*
+*   Close the mgd connection
+*
+*/
+            expr jcs:close($con);
+
+        }
+    }
+    else {
+        call write-output($where = "s", $type = "APPLE-FBF.SLAX[Info]: ", $message = "Missing Script Arguments");
+    } 
+    }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}
+/*
+*   NAME: CHECK-EXISTANCE
+*   PURPOSE: To determine if the next-hop for the route specified
+*            already exists in the route table.  This avoids opening
+*            the configuration and adding the entry.
+*   CALLED: Called before any other process takes place in the script.
+*
+*
+*   PARMS PASSED:
+*
+*/
+template check-existance {
+/*
+*
+*   Issue the routing RPC to see for the next-hop specified
+*
+*/
+    var $rpc = <get-interface-filter-information> {
+                   <interface-name>$interface;
+    }
+    var $output= jcs:invoke($rpc);
+/*
+*
+*   Was routing information returned for the next-hop
+*
+*/
+    if ($output/route-table/rt) {
+/*
+*
+*    Normalize the "route" param and rt-destination.
+*      One or both may contain trailing zeros.
+*
+*/
+        var $clip-network = substring-before($route,"/");
+        var $clip-cidr = substring-after($route,"/");
+        var $clip-dest = substring-before($output/route-table/rt/rt-destination,".0");
+/*
+*
+*   Check to see if the next-hop and route match what was returned
+*     from the RPC and if so return a "1".
+*
+*/
+        if (($clip-dest == $clip-network) && contains($output/route-table/rt/rt-destination,$clip-cidr) && $output/route-table/rt/rt-entry/nh/to == $next-hop) {
+
+            call write-output($level="user.warning",$type="user",$id="APPLE-FBF.SLAX[Info]: ",$where="s",$message="Route Already in the configuration");
+            expr 1;
+        }
+        else {
+/*
+*
+*   If the next-hop was returned, but not for the route specified
+*     return a "0".
+*
+*/
+            call write-output($level="user.warning",$type="user",$id="APPLE-FBF.SLAX[Info]: ",$where="s",$message="Wrong Route");
+            expr 0;
+}
+    }
+/*
+*
+*   If no routing information was returned for the the next-hop
+*     specified, return a "0"
+*
+*/
+    else {
+        call write-output($level="user.warning",$type="user",$id="APPLE-FBF.SLAX[Info]: ",$where="s",$message="Route not configured");
+        expr 0;
+    }
+
+}

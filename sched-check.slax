@@ -1,0 +1,110 @@
+/*
+*
+*    NAME: sched-check.slax
+*    PURPOSE: To allow the user to set an upper limiter on the ammount
+*             of buffer space that a scheduler-map can allocate.
+*
+*    CREATED: 03/04/11
+*    BY: Jay Wilson (Sr Consulting Eng Americas)
+*    LAST MOD: 03/05/11
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+/* MAX Buffer for each scheduler-map */
+var $max = 10;
+
+/* Turns on debug (var $debug = 1) */
+var $debug;
+
+match configuration {
+
+/*
+*
+*  Process all scheduler-maps
+*
+*/
+   for-each (class-of-service/scheduler-maps) {
+      var $name = name;
+      if ($debug) {
+          call debug($value=$name,$desc="Scheduler-map Name =");
+      }
+/*
+*
+*  queue the buffer-size of all schedulers used by the 
+*  scheduler-map
+*
+*/
+      var $percent := { 
+          for-each (forwarding-class) {
+              var $scheduler=scheduler;
+              copy-of ../../schedulers[name==$scheduler]/buffer-size/percent;
+          }
+      }
+/*
+*
+*  process the buffer-sizes retrieved and check againsted $max allowed
+*
+*/
+      var $buf-tot = sum($percent/percent);
+      if ($debug) {
+          call debug($value=$buf-tot,$desc="Total =");
+      }
+      if ($buf-tot > $max) {
+          var $msg1 = "Scheduler-map = " _ $name;
+          call write-error($message=$msg1);
+          call write-error($message="Buffers requested exceed maximum allowed!!");
+          var $msg2 = "Buffers requested = " _ $buf-tot;
+          call write-error($message=$msg2);
+          var $msg3 = "Maximum allowed   = " _ $max;
+          call write-error($message=$msg3);
+      }
+   }
+}
+/*
+*   NAME: DEBUG 
+*   PURPOSE: Writes a WARNING message to standard output.
+*   CALLED: Can be called at any time from any where; however, the
+*           "debug" var must be set to a non-null value when the script
+*           is invoked.
+*
+*   PARMS PASSED:
+*        $value = A variable with a value in it.
+*        $desc  = A description of the the value is for.
+*
+*/
+template debug($value, $desc) {
+    <xnm:warning> {
+        <message> {
+            expr "DEBUG: ";
+            expr $desc;
+            expr $value;
+        }
+   }
+}
+/*
+*   NAME: WRITE-ERROR
+*   PURPOSE: Writes an ERROR message to standard output.
+*   CALLED: When the buffer total for a scheduler-map exceeds the
+*           allowable limit.  The limit is set using the variable "max".
+*
+*   PARMS PASSED:
+*        $message = The message to print.
+*
+*/
+template write-error($message) {
+    <xnm:error> {
+        <message> {
+            expr $message;
+        }
+    }
+}

@@ -1,0 +1,271 @@
+﻿/*
+*
+*    NAME: eric-srx.slax
+*    PURPOSE: Created for Eric to disable/enable interfaces
+*             on an SRX based on specific events occurring.
+*
+*
+*    CREATED: 05/23/13
+*    BY: Jay Wilson (Sr Con Eng -- AT DC AMER)
+*    LAST MOD: 12/05/13
+*    BY: Jay Wilson
+*    VERSION: 1.10
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Added interfaces to the disable/enable functions
+*                Added parm to pass in the DEBUG syslog level
+*                Changed [Debug] to [DEBUG]
+*        V2.00 = Made interface processing dynamic via the
+*                interfaces parm
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script
+*  when specific events trigger.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "test";
+            <description> "Run in test mode";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "Turn on debugging";
+        }
+        <argument> {
+            <name> "dlevel";
+            <description> "What level to write info messages into syslog at";
+        }
+        <argument> {
+            <name> "action";
+            <description> "Action to take (disable | enable)";
+        }
+        <argument> {
+            <name> "interfaces";
+            <description> "A comma separated list of interfaces to take action on.";
+        }
+}
+param $test;
+param $debug;
+param $dlevel;
+param $action;
+param $interfaces;
+
+var $con = jcs:open();
+var $syslog-level = {
+        if ($dlevel) {
+                expr $dlevel;
+        }
+        else {
+                expr "user.info";
+        }
+}
+
+match / {
+    <event-script-results> {
+        var $event = {
+            if (contains(event-script-input/trigger-event/id,"trap7") ||
+                contains(event-script-input/trigger-event/id,"TRAP7")) {
+                    expr event-script-input/trigger-event/id _ " : " _ event-script-input/trigger-event/attribute-list/attribute[name=="jnxFruName"]/value;
+            }
+            else if (contains(event-script-input/trigger-event/id,"trap6") ||
+                contains(event-script-input/trigger-event/id,"TRAP6")) {
+                    expr event-script-input/trigger-event/id _ " : " _ event-script-input/trigger-event/attribute-list/attribute[name=="jnxContentsDescr"]/value;
+            }
+            else {
+                expr event-script-input/trigger-event/id;
+            }
+        }
+        if ($debug) {
+            var $msg1 = "event = " _ $event;
+            expr jcs:syslog($syslog-level, "eric-srx.slax[DEBUG]: ", $msg1);
+        }
+        if ($action == "disable") {
+            call disable;
+        }
+        else if ($action == "enable") {
+            call enable;
+        }
+        else {
+            expr jcs:syslog($syslog-level, "eric-srx.slax[DEBUG]: ", "Invalid action passed to the script"); 
+        }
+     }
+     expr jcs:close($con);
+}
+
+/*
+*   NAME: DISABLE
+*   PURPOSE: Disables the interfaces
+*   CALLED: Called if the event interface matches the RTG Interface
+*
+*   PARMS PASSED:
+*
+*/
+template disable() {
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     call make-element($iface=$interfaces);
+                 }
+            }
+        }
+        if ($debug) {
+            expr jcs:syslog($syslog-level, "eric-srx[DEBUG]: ", "In DISABLE");
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        if ($test) {
+           expr jcs:syslog($syslog-level, "eric-srx[TEST]: ", $xml);
+        }
+        else {
+            var $results := {
+                call jcs:load-configuration($connection = $con, $configuration = $xml);
+            }
+/*
+*
+*   Check the results and process them
+*
+*/
+            for-each ($results//xnm:warning) {
+                if (not(contains(message,"statement not found:"))) {
+                    expr jcs:syslog("user.warning", "eric-srx.slax[Warning]: ", message);
+                }
+            }
+            if ($results//xnm:error) {
+                for-each ($results//xnm:error) {
+                    expr jcs:syslog("user.error", "eric-srx.slax[Error]: ", message);
+                }
+            }
+            else {
+                expr jcs:syslog($syslog-level, "eric-srx.slax[Success]: ", "Successfully deactivated the interface");
+            }
+        }
+}
+/*
+*   NAME: ENABLE
+*   PURPOSE: Enables the interfaces
+*   CALLED: Called if action = enable
+*
+*   PARMS PASSED:
+*
+*/
+template enable() {
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     call make-element($iface=$interfaces);
+                 }
+            }
+        }
+        if ($debug) {
+            expr jcs:syslog($syslog-level, "eric-srx[DEBUG]: ", "In ENABLE");
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        if ($test) {
+           expr jcs:syslog($syslog-level, "eric-srx[TEST]: ", $xml);
+        }
+        else {
+            var $results := {
+                call jcs:load-configuration($connection = $con, $configuration = $xml);
+            }
+/*
+*
+*   Check the results and process them
+*
+*/
+            for-each ($results//xnm:warning) {
+                if (not(contains(message,"statement not found:"))) {
+                    expr jcs:syslog("user.warning", "eric-srx.slax[Warning]: ", message);
+                }
+            }
+            if ($results//xnm:error) {
+                for-each ($results//xnm:error) {
+                    expr jcs:syslog("user.error", "eric-srx.slax[Error]: ", message);
+                }
+            }
+            else {
+                expr jcs:syslog($syslog-level, "eric-srx.slax[Success]: ", "Successfully activated the interface");
+            }
+        }
+}
+/*
+*
+*   NAME: MAKE-ELEMENT
+*   PURPOSE: To process the interfaces passed into the script
+*            and build the xml structure for each interface that
+*            is processed
+*   CALLED: Called by the ENABLE and DISABLE functions and by
+*           itself recursively until all interfaces have been
+*           processed
+*
+*   PARMS PASSED: iface = the remaining interfaces to process
+*
+*/
+template make-element($iface) {
+/*
+*
+*  remove the white-space and put a comma on the end if none exists
+*
+*/
+    var $fixediface = {
+        if (contains($iface, ",")) {
+            expr normalize-space($iface);
+        
+        } else {
+            expr normalize-space($iface)  _ ",";
+        }
+    }
+/*
+*
+*  split the remaining string
+*
+*/
+    var $before = substring-before($fixediface, ",");
+    var $after = substring-after($fixediface, ",");
+/*
+* 
+*  output current value and loop until all values have been output
+*
+*/
+    <xsl:element name="interface"> {
+        <xsl:element name="name"> $before;
+        if ($action == "disable") {
+                <xsl:element name="disable">;
+        }
+        else {
+                <xsl:element name="disable"> {
+                <xsl:attribute name="delete">;
+                }
+       }
+    }
+    if ($after) {
+        call make-element($iface=$after);
+    }
+}

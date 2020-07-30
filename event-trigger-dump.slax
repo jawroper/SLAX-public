@@ -1,0 +1,133 @@
+/*
+*
+*    NAME: event-trigger-dump.slax
+*    PURPOSE: Created to dump all of the attributes for the
+*             event that triggered this script.
+*
+*
+*    CREATED: 05/23/13
+*    BY: Jay Wilson (Sr Con Eng -- AT DC AMER)
+*    LAST MOD: 05/24/13
+*    BY: Jay Wilson
+*    VERSION: 1.01
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*         1.01 = changed output to syslog warning level
+*                from info level
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ns exsl = "http://exslt.org/common";
+import "../import/junos.xsl";
+
+var $con = jcs:open();
+
+match / {
+    <event-script-results> {
+        var $event=event-script-input/trigger-event;
+        call jcs:cdump($out=$event, $style="<>");
+    }
+    expr jcs:close($con);
+}
+/*
+*
+*  Modified version of Phil Shafer's jcs:cdump.
+*  Output is formated for dumping from a commit script
+*     by placing the dumpped information in "warning"
+*     messages.
+*
+*/
+template jcs:cdump ($name, $out, $indent = "", $style)
+{
+        var $mydent = {
+            if ($name) {
+                expr $indent _ "  ";
+            } else {
+                expr $indent;
+            }
+        }
+        if ($name) {
+            var $v1 = $indent _ $name _ " = {";
+            call warning($message = $v1);
+        }
+        var $oq = {
+            if ($style == "<>") {
+                 expr "<";
+            }
+        }
+        var $cq = {
+            if ($style == "<>") {
+                expr ">";
+            }
+        }
+
+        if (exsl:object-type($out) == "string") {
+            var $v2 = $mydent _ "'" _ $out _ "';";
+            call warning($message = $v2);
+
+        } else if (name($out)) {
+            var $text = $out/text();
+
+            if ($out/ *) {
+                var $v2-2 = $mydent _ $oq _ name($out) _ $cq _ "{";
+                call warning($message = $v2-2);
+                for-each ($out/ *) {
+                    call jcs:cdump($out = ., $indent = "  " _ $mydent);
+                }
+                var $v3 = $mydent _ "}";
+                call warning($message = $v3);
+
+            } else if ($text) {
+                if (string-length($out) == 1 && starts-with($out, "\n")) {
+                    var $v4 = $mydent _ $oq _ name($out) _ $cq _ ";";
+                    call warning($message = $v4);
+                } else {
+                    var $v5 = $mydent _ $oq _ name($out) _ $cq _ " '" _ $text _ "';";
+                    call warning($message = $v5);
+                }
+
+            } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+                var $v6 = $mydent _ $oq _ name($out) _ $cq _ ";";
+                call warning($message = $v6);
+            } else {
+                var $v7 = $mydent _ $oq _ name($out) _ $cq _ "{";
+                call warning($message = $v6);
+                for-each ($out/ *) {
+                    call jcs:cdump($out = ., $indent = "  " _ $mydent);
+                }  
+                var $v8 = $mydent _ "}";
+                call warning($message = $v8);
+            }
+
+        } else if ($out/node()) {
+            for-each ($out/ *) {
+                call jcs:cdump($out = ., $indent = $mydent);
+            }  
+
+        } else if ($out/text()) {
+            var $v9 = $mydent _ .;
+            call warning($message = $v9);
+        }
+
+        if ($name) {
+            var $v10 = $indent _ "}";
+            call warning($message = $v10);
+        }
+}
+/*
+*   NAME: WARNING
+*   PURPOSE: Writes a message to syslog.
+*   CALLED: Called by jcs:cdump
+*
+*   PARMS PASSED:
+*        $message = The string to print out 
+*
+*/
+template warning($message) {
+    expr jcs:syslog("user.warning", "ETD: ", $message);
+}

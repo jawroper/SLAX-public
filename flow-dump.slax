@@ -1,0 +1,227 @@
+/*
+*
+*    NAME: flow-dump.slax
+*    PURPOSE: Created to determine if a session is about to
+*             time out on an SRX and if it is then sends a
+*             reset to the end-points.
+*
+*
+*    CREATED: 06/10/10
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 06/14/10
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Added timeout logical
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ns exsl = "http://exslt.org/common";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "debug";
+        <description> "Any character turns on debugging (5 = detail)";
+    }
+    <argument> {
+        <name> "syslog";
+        <description> "Any none blank character will cause a message to be written to syslog";
+    }
+    <argument> {
+        <name> "timeout";
+        <description> "The remaining time on a session at which to send RSTs to the end points";
+    }
+}
+param $debug;
+param $syslog;
+param $timeout;
+
+var $connection = jcs:open();
+
+match / {
+    <op-script-results> {
+/*
+*
+*  RPC that returns the "show security zones" output
+*
+*/
+        var $rpcc = {
+            <get-zones-information>; 
+        }
+        var $zone-output = jcs:execute($connection,$rpcc);
+        if ($debug == 5) {
+            call jcs:dump($out=$zone-output,$style="<>");
+        }
+/*
+*
+*  RPC that returns the "show security flow" output
+*
+*/
+        var $rpc = {
+            <get-flow-session-information>; 
+        }
+        var $flow-output = jcs:execute($connection,$rpc);
+        if ($debug == 5) {
+            call jcs:dump($out=$flow-output,$style="<>");
+        }
+        call flow-process($flow-stack=$flow-output,$zone-stack=$zone-output);
+    }
+}
+/*
+*   NAME: FLOW-PROCESS
+*   PURPOSE: Process the flows/sessions that are currently in an up state.
+*   CALLED: Called after the zone information is known.
+*
+*   PARMS PASSED:
+*        $flow-stack = the flow-information table
+*        $zone-stack = the zone-information table
+*
+*/
+template flow-process($flow-stack, $zone-stack) {
+    for-each($flow-stack/flow-session) {
+/*
+*
+*  compare the timeout value for the session with the timeout parm
+*
+*/
+        if (timeout <= $timeout) {
+           call write-debug($debug=$debug,$message="FOUND MATCHING TIMEOUT");
+           for-each(flow-information) {
+/*
+*
+*  if the flow is not to the device itself, then process it
+*
+*/
+               if (not(contains(interface-name,".local."))) {
+                   var $flow-interface = interface-name;
+                   var $message = " Sadd:" _ source-address _ " Dadd:" _ destination-address _ " Interface:" _ interface-name;
+                   call write-debug($debug=$debug,$message=$message);
+/*
+*
+*  find the zone for the each source and destination that is about to
+*  timeout
+*
+*/
+                   for-each($zone-stack/zones-security/zones-security-interfaces) {
+                       if ($flow-interface == zones-security-interface-name) {
+                           var $mess02 = " FOUND MATCHING INTERFACE.  ZONE:" _ ../zones-security-zonename;
+                           call write-debug($debug=$debug,$message=$mess02);
+                       }
+                   }
+               }
+           }
+        }
+    }
+}
+/*
+*   NAME: WRITE-DEBUG
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it, but only if DEBUG is turned on.
+*   CALLED: Called any time I want a message written out for debugging.
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*        $debug = The debug value set when the script is invoked
+*
+*/
+template write-debug($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message, $debug) {
+    if ($debug){
+        var $stdmessage = $id _ $message;
+        if ($where == "s") {
+            expr jcs:output($stdmessage);
+        }
+        else {
+            expr jcs:syslog($level, $type, $message);
+            expr jcs:output($stdmessage);
+        }
+    }         
+}
+/*
+*   NAME: DUMP
+*   PURPOSE: Print the output from a RPC
+*   CALLED: Called by PING-LOOP if debug is set to 5
+*
+*   PARMS PASSED:
+*        $out = what varible to display
+*        $style = "<>" means XML, empty means JUNOS
+*        $name = a string that is prepended to any output
+*        $indent = spacing between $name and output
+*/
+template jcs:dump ($name, $out, $indent = "", $style)
+{
+    var $mydent = {
+        if ($name) {
+            expr $indent _ "  ";
+        } else {
+            expr $indent;
+        }
+    }
+    if ($name) {
+        expr jcs:output($indent, $name, " = {");
+    }
+    var $oq = {
+        if ($style == "<>") {
+            expr "<";
+        }
+    }
+    var $cq = {
+        if ($style == "<>") {
+            expr ">";
+        }
+    }
+
+    if (exsl:object-type($out) == "string") {
+        expr jcs:output($mydent, "'", $out, "';");
+
+    } else if (name($out)) {
+        var $text = $out/text();
+
+        if ($out/ *) {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+
+        } else if ($text) {
+            if (string-length($out) == 1 && starts-with($out, "\n")) {
+                expr jcs:output($mydent, $oq, name($out), $cq, ";");
+            } else {
+                expr jcs:output($mydent, $oq, name($out), $cq,
+                                " '", $text, "';");
+            }
+
+        } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+            expr jcs:output($mydent, $oq, name($out), $cq, ";");
+        } else {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+        }
+
+    } else if ($out/node()) {
+        for-each ($out/ *) {
+            call jcs:dump($out = ., $indent = $mydent);
+        }
+
+    } else if ($out/text()) {
+        expr jcs:output($mydent, .);
+    }
+
+    if ($name) {
+        expr jcs:output($indent, "}");
+    }
+}

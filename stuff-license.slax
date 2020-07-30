@@ -1,0 +1,137 @@
+/*
+*
+*    PURPOSE: Created to stuff the licensing information
+*             in an OID that can be accessed via SNMP.
+*
+*    CREATED: 07/28/10
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 07/28/10
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "debug";
+        <description> "Any none blank character turns on debugging";
+    }
+}
+
+/* Embed the event policy to keep the configuration clean */
+var $event-definition = {
+            <event-options> {
+                <generate-event> {
+                    <name> "stuff-license";
+                    <time-of-day> "00:01:00";
+                }
+                <policy> {
+                    <name> "timed-stuff-license";
+                    <events> "stuff-license";
+                    <then> {
+                        <event-script> {
+                            <name> "stuff-license.slax";
+                        }
+                    }
+                }
+            }
+}
+
+param $debug;
+
+/* Perform all operations over a single connection for speed increase */
+var $connection = jcs:open();
+
+/*
+*
+*   Used to make the Util MIB Instance unique
+*
+*/
+var $util-mib-instance-ID = "eum-";
+
+
+match / {
+    <event-script-results> {
+/*
+*
+*  RPC that returns the "show system license usage" output
+*
+*/
+        var $rpc = <get-license-usage-summary> {
+        }
+        var $rpc-output = jcs:execute($connection, $rpc);
+        for-each ($rpc-output/feature-summary) {
+            call util-mib-stuff($name=name, $type=validity-type, $count = position());
+        }
+    }
+}
+
+
+/*
+*   NAME: UTIL-MIB-STUFF
+*   PURPOSE: Add the license information to the UTIL MIB Tree
+*   CALLED: Called once the license information has been retrieved
+*
+*   PARMS PASSED:
+*        $name = the license name
+*        $type = the type of license
+*
+*/
+template util-mib-stuff($name, $type, $count) {
+    if ($debug) {
+        var $dmsg1=" Processing license --> " _ $count;
+        expr jcs:syslog("user.info","stuff-license.slax[DEBUG]: ",$dmsg1);
+    }
+    var $rpcN = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _  "LMS-" _ $count _ 1;
+        <object-type> "string";
+        <object-value> $name;
+    }
+    var $rpcD = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ "LMS-" _ $count _ 2;
+        <object-type> "string";
+        <object-value> $type;
+    }
+    var $resN = jcs:execute($connection, $rpcN);
+    call verify-results ($results = $resN, $count = $count, $value="1");
+    var $resD = jcs:execute($connection, $rpcD);
+    call verify-results ($results = $resN, $count = $count, $value="2");
+}
+
+/*
+*   NAME: VERIFY-RESULTS
+*   PURPOSE: Checks the results from the jcs:invoke used to stuff
+*            the UTIL MIB.
+*   CALLED: Called after each request-snmp-utility-mib-set is 
+*           invoked.
+*
+*
+*   PARMS PASSED:
+*        $results = the structure returned from the jcs:invoke
+*        $count = the feature-summary order number
+*        $value = (1=license name/2=license type)
+*
+*/
+template verify-results ($results, $count, $value) {
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+                expr jcs:syslog("user.warning","stuff-license.slax[I/W/E]: ",message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "stuff-licence.slax[I/W/E]: ", message);
+            }
+        }
+        else {
+            var $message = "Successfully processed Util MIB for license " _ $count _ " value " _ $value;
+            expr jcs:syslog("user.info", "stuff-license.slax[Success]: ", $message);
+        }
+}

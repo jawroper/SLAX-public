@@ -1,0 +1,303 @@
+/*
+*
+*    PURPOSE: Created for UVA to retrieve interface values
+*             via SNMP instead of XML.
+*
+*    CREATED: 09/14/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 09/22/09
+*    BY: Curtis Call
+*    VERSION: 1.11
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Add $util-mib-instance-ID
+*                Modified util-mib-stuff template
+*                  . changed the instance name to make
+*                        the mib easier to access
+*        V1.11 = Changed from jcs:invoke() to jcs:execute() to improve speed
+*                Added a - between user name and value index
+*                Embedded the event policy into the script
+*                Fixed the SNMP_TRAP_LINK_UP event name
+*                Fixed spelling of <op-script-results>
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "interface";
+        <description> "EX interface name";
+    }
+    <argument> {
+        <name> "debug";
+        <description> "Any none blank character turns on debugging";
+    }
+}
+
+/* Embed the event policy to keep the configuration clean */
+var $event-definition = {
+            <event-options> {
+                <generate-event> {
+                    <name> "stuff-mib";
+                    <time-interval> "1800";
+                }
+                <policy> {
+                    <name> "timed-stuff";
+                    <events> "stuff-mib";
+                    <then> {
+                        <event-script> {
+                            <name> "ex-util-mib.slax";
+                        }
+                    }
+                }
+                <policy> {
+                    <name> "link-up";
+                    <events> "snmp_trap_link_up";
+                    <then> {
+                        <event-script> {
+                            <name> "ex-util-mib.slax";
+                            <arguments> {
+                                <name> "interface";
+                                <value> "{$$.interface-name}";
+                            }
+                        }
+                    }
+                }
+            }
+}
+
+param $interface;
+param $debug;
+
+/* Perform all operations over a single connection for speed increase */
+var $connection = jcs:open();
+
+/*
+*
+*   Used to make the Util MIB Instance unique
+*
+*/
+var $util-mib-instance-ID = "eum-";
+
+
+match / {
+    <op-script-results> {
+/*
+*
+*   If no PARM is passed to the script, process all interfaces
+*
+*/
+    if ($interface) {
+
+/*
+*
+*  RPC that returns the "show interface" output
+*
+*/
+        var $rpc = <get-interface-information> {
+            <extensive>;
+            <interface-name> $interface;
+
+        }
+        var $physical-output = jcs:execute($connection, $rpc);
+
+/*
+*
+*  Check to see if the interface has TRUNKING turned on
+*
+*/
+        var $trunk = {
+                if ($physical-output/physical-interface/logical-interface/address-family/address-family-flags/ifff-port-mode-trunk) {
+                    expr "yes";
+                }
+                else {
+                    expr "no";
+                }
+        }
+
+/*
+*
+*  Put the INTERFACE information into the UTIL MIB
+*
+*/
+        call util-mib-stuff($name = $physical-output/physical-interface/name, $speed = $physical-output/physical-interface/speed, $duplex = $physical-output/physical-interface/duplex, $lpduplex = $physical-output/physical-interface/ethernet-autonegotiation/link-partner-duplexity, $lpspeed = $physical-output/physical-interface/ethernet-autonegotiation/link-partner-speed, $trunk = $trunk);
+    }
+    else {
+
+/*
+*
+*  RPC that returns the "show interface" output
+*
+*/
+        var $rpc-all = <get-interface-information> {
+            <extensive>;
+        }
+        var $physical-output-all = jcs:execute($connection, $rpc-all);
+            
+        for-each ($physical-output-all/physical-interface) {
+
+/*
+*
+*  Check to see if the interface has TRUNKING turned on
+*
+*/
+            var $trunk = {
+                    if (logical-interface/address-family/address-family-flags/ifff-port-mode-trunk) {
+                       expr "yes";
+                    }
+                    else {
+                       expr "no";
+                    }
+            }
+
+/*
+*
+*  Put the "current" INTERFACE information into the UTIL MIB
+*
+*/
+            call util-mib-stuff($name = name, $speed = speed, $duplex = duplex, $lpduplex = ethernet-autonegotiation/link-partner-duplexity, $lpspeed = ethernet-autonegotiation/link-partner-speed, $trunk = $trunk);
+        }
+    }
+    
+    /* Close the connection */
+    expr jcs:close( $connection );
+    }
+}
+
+
+/*
+*   NAME: UTIL-MIB-STUFF
+*   PURPOSE: Add the interface attributes to the UTIL MIB Tree
+*   CALLED: Called once the interface information has been retrieved
+*           via XML APIs.
+*
+*   PARMS PASSED:
+*        $name = the interface name
+*        $speed = the current speed setting
+*        $duplex = the current duplex setting
+*        $lpduplex = the partner's current duplex setting
+*        $lpspeed = the partner's current speed setting
+*        $trunk = the current mode setting
+*
+*/
+template util-mib-stuff($name, $speed, $duplex, $lpduplex, $lpspeed, $trunk) {
+    if ($debug) {
+        <output> jcs:printf("   Processing interface -> %s, SP -> %s, DU -> %s, LSP -> %s, LDU -> %s, TRUNK -> %s\n",$name,$speed,$duplex,$lpspeed,$lpduplex, $trunk); 
+
+    }
+    var $rpcN = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _ 1;
+        <object-type> "string";
+        <object-value> $name;
+    }
+    var $rpcD = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _2;
+        <object-type> "string";
+        <object-value> $duplex;
+    }
+    var $rpcS = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _3;
+        <object-type> "string";
+        <object-value> $speed;
+    }
+    var $rpcLPD = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _4;
+        <object-type> "string";
+        <object-value> $lpduplex;
+    }
+    var $rpcLPS = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _5;
+        <object-type> "string";
+        <object-value> $lpspeed;
+    }
+    var $rpcT = <request-snmp-utility-mib-set> {
+        <instance> $util-mib-instance-ID _ $name _ "-" _6;
+        <object-type> "string";
+        <object-value> $trunk;
+    }
+    var $resN = jcs:execute($connection, $rpcN);
+    call verify-results ($results = $resN, $name = $name, $attribute = "NAME");
+    var $resD = jcs:execute($connection, $rpcD);
+    call verify-results ($results = $resN, $name = $name, $attribute = "DUPLEX");
+    var $resS = jcs:execute($connection, $rpcS);
+    call verify-results ($results = $resN, $name = $name, $attribute = "SPEED");
+    var $resLPD = jcs:execute($connection, $rpcLPD);
+    call verify-results ($results = $resN, $name = $name, $attribute = "LPDUPLEX");
+    var $resLPS = jcs:execute($connection, $rpcLPS);
+    call verify-results ($results = $resN, $name = $name, $attribute = "LPSPEED");
+    var $resT = jcs:execute($connection, $rpcT);
+    call verify-results ($results = $resN, $name = $name, $attribute = "TRUNK");
+
+}
+
+/*
+*   NAME: VERIFY-RESULTS
+*   PURPOSE: Checks the results from the jcs:invoke used to stuff
+*            the UTIL MIB.
+*   CALLED: Called after each request-snmp-utility-mib-set is 
+*           invoked.
+*
+*
+*   PARMS PASSED:
+*        $results = the structure returned from the jcs:invoke
+*        $name = the interface the jcs:invoke was called for
+*        $attribute = the interface attribute that was stuffed
+*
+*/
+template verify-results ($results, $name, $attribute) {
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = "ex-util-mib.slax[Warning]: ", $where = "s", $message = message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "ex-util-mib.slax[Error]: ", $where = "s", $message = message);
+            }
+        }
+        else {
+            var $message = "Successfully processed Util MIB for " _ $name _ " for attribute " _ $attribute;
+            call write-output($level = "user.info", $id = "INFO: ", $type = "ex-util-mib.slax[Success]: ", $where = "s", $message = $message);
+        }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify output location
+*                     s == syslog
+*                     t == terminal 
+*                     b == both
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "t") {
+        expr jcs:output($stdmessage);
+     }
+     else if ($where == "s") {
+        expr jcs:syslog($level, $type, $message);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}
+

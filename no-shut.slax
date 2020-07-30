@@ -1,0 +1,130 @@
+/*
+*
+*    PURPOSE: Created for customers with a Cisco background that 
+*             that are use to using a general purpose "HAMMER" to
+*             fix issues with a specific INTERFACE.  This script
+*             will enable a disabled INTERFACE.  It is a
+*             cousin script to shut.slax.
+*
+*
+*    CREATED: 03/29/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 03/29/09
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+var $arguments = {
+    <argument> {
+        <name> "interface";
+        <description> "Interface to enable";
+    }
+}
+
+param $interface;
+
+match / {
+    if ($interface) {
+/*
+*
+*   Open a connection with mgd
+*
+*/
+        var $con = jcs:open();
+        if (not($con)) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = "shut.slax[Error]: ", $where = "b", $message = "Not able to connect to local mgd");
+        }
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <interface> {
+                         <name> $interface;
+                         <disable delete="delete">;
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = "no-shut.slax[Warning]: ", $where = "b", $message = message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "no-shut.slax[Error]: ", $where = "b", $message = message);
+            }
+        }
+        else {
+            call write-output($level = "user.info", $id = "INFO: ", $type = "no-shut.slax[Success]: ", $where = "b", $message = "Successfully activated the interface");
+        }
+
+/*
+*
+*   Close the mgd connection
+*
+*/
+        expr jcs:close($con);
+    }
+    else {
+        call write-output($where = "s", $message = "No Interface was specified!");
+    } 
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);     
+         expr jcs:output($stdmessage);
+     }         
+
+}

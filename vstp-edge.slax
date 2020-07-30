@@ -1,0 +1,183 @@
+/*
+*
+*    NAME: vstp-edge.slax
+*    PURPOSE: To allow the user to set the "edge" attributes by vstp group
+*             on a QFabric.
+*
+*    CREATED: 09/13/12
+*    BY: Jay Wilson (Sr Consulting Engineer -- DC)
+*    LAST MOD: 09/13/12
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*    Example 1:
+*       Add "edge" to all ethernet-switching ports in the NNG
+*
+*       apply-macro vstp-edge {
+*          group-name XXX
+*          add
+*       }
+*
+*/
+version 1.1;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+var $debug = "y";
+match configuration {
+    var $root = .;
+/*
+*  Process the apply-macros
+*        Only look at macros that start with "range"
+*
+*/
+    for-each (apply-macro[starts-with(name,"vstp-edge")]) {
+        var $group-name = data[name = 'group-name']/value;
+        if (data[name = 'action']/value == "add") {
+           call process($type="add",$group=$group-name, $root=$root);
+        }
+        else {
+           call process($type="delete",$group=$group-name, $root=$root);
+        }
+/*
+*
+*  remove the apply-macro so that it only runs 1 time.
+*
+*        <change> {
+*            <apply-macro delete="delete"> {
+*                <name> ./name;
+*            }
+*        }
+*/
+    }
+}
+template process($type, $group, $root) {
+/*
+*
+*  First process any LAGs that exist for the NW-NG-0.
+*  There is only 1 NW-NG-0 in a QFabric
+*
+*/
+    var $root2=$root;
+    for-each ($root/interfaces/interface[contains(name,"NW-NG-0:")]) {
+        var $spn = ./name _ ".0";
+        call debug($msg="Processing NW-NG-0 LAG = " _ $spn);
+        if ($type == "delete") {
+           call do-vstp($ifl=$spn, $group=$group, $what-to-do = "delete", $root=$root);
+        }
+        else {
+           call do-vstp($ifl=$spn, $group=$group, $what-to-do = "add", $root=$root);
+        }
+    }
+    for-each ($root/fabric/resources/node-group[name="NW-NG-0"]/node-device) {
+        var $nng-member = ./name _ ":";
+        call debug($msg="NNG-MEMBER = " _ $nng-member);
+        for-each ($root/interfaces/interface[contains(name,$nng-member)]) {
+            if (.//family/ethernet-switching) {
+                var $spn = ./name _ ".0";
+                call debug($msg="Processing Interface = " _ $spn);
+                if ($type == "delete") {
+                    call do-vstp($ifl=$spn, $group=$group, $what-to-do = "delete", $root=$root);
+                }
+                else {
+                    call do-vstp($ifl=$spn, $group=$group, $what-to-do = "add", $root=$root);
+                }
+            }
+            else {
+                call debug($msg="Not Processing Interface = " _ ./name);
+            }
+        }
+    }
+}
+/*
+*   NAME: DO-VSTP
+*   PURPOSE: To set a range of intefaces as "edge" ports in vstp
+*   CALLED: Only for NW-NG-0 and NNG interfaces that are set to
+*           ethernet-switching
+*
+*   PARMS PASSED:
+*        $ifl = The interface name to act on
+*        $group = The vstp group the $ifl belongs to
+*        $what-to-do = are we adding or deleting the interface to vstp
+*        $root = The anchor point for the node-set
+*
+*/
+template do-vstp($ifl, $group, $what-to-do, $root) {
+/*
+*
+*  Delete the interface from vstp only if it is set for "edge"
+*
+*/
+    if ($what-to-do == "delete") {
+        if ($root/protocols/vstp//interface[name=$ifl]/edge) {
+            <change> {
+                <protocols> {
+                    <vstp> {
+                        <vlan-group> {
+                            <group>  {
+                                <name> $group;
+                                <interface delete="delete"> {
+                                    <name> $ifl;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        else {
+            <xnm:warning> {
+                <message> "Interface " _ $ifl _ " is set for EDGE or is not in VSTP...NOT Processing DELETE REQUEST!!!";
+            }
+        }
+    }
+/*
+*
+*  Add the interface to vstp only if it currently isn't in VSTP
+*
+*/
+    else {
+        if ($root/protocols/vstp//interface/name == $ifl) {
+            <xnm:warning> {
+                <message> "Interface " _ $ifl _ " already in VSTP...NOT Processing ADD REQUEST!!!";
+            }
+        }
+        else {
+           <change> {
+               <protocols> {
+                   <vstp> {
+                       <vlan-group> {
+                           <group>  {
+                               <name> $group;
+                               <interface> {
+                                   <name> $ifl;
+                                   <edge>;
+                               }
+                           }
+                       }
+                   }
+               }
+           }
+       }
+   }
+}
+/*
+*   NAME: DEBUG
+*   PURPOSE: Writes a debug message to standard out
+*   CALLED: Called if the debug param is specified when the script is run.
+*
+*
+*   PARMS PASSED:
+*        $msg = Standout message ID
+*/
+template debug($msg) {
+  if ($debug) {
+       <xnm:warning> {
+         <message> $msg;
+       }
+  }
+}

@@ -1,0 +1,189 @@
+;/*
+*
+*    NAME: pop-link.slax
+*    PURPOSE: Created for PCC to create an event by
+*             disabling/enabling an RTG backup interface
+*             when the primary interface goes active.
+*
+*
+*    CREATED: 09/10/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 09/10/09
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script.
+*  This argument is by the event attribute "interface-name"
+*  when the event triggers.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "ifname";
+            <description> "Event Interface";
+        }
+        <argument> {
+            <name> "ifpop";
+            <description> "Interface to disable/enable";
+        }
+        <argument> {
+            <name> "ifchk";
+            <description> "Interface to compare event Interface to";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "True on debugging";
+        }
+}
+param $ifname;
+param $ifpop;
+param $ifchk;
+param $debug;
+
+var $con = jcs:open();
+
+match / {
+    <event-script-results> {
+        if ($ifpop && $ifname && $ifchk) {
+            if ($ifchk == $ifname) {
+                if ($debug) {
+                    expr jcs:syslog("user.info", "pop-link.slax[Debug]: ", "ifchk = ifpop");
+                }
+                call disable;
+                expr jcs:sleep(1);
+                call enable;
+            }
+            else {
+                if ($debug) {
+                    var $message = "No match: ifname=" _ $ifname _ " ifchk=" _ $ifchk;
+                    expr jcs:syslog("user.info", "pop-link.slax[Debug]: ", $message); 
+                }
+            }
+        }
+        else {
+            expr jcs:syslog("user.warning", "pop-link.slax[Warning]: ", "Missing a PARM(ifpop ifname ifchk)");
+        }
+     }
+     expr jcs:close($con);
+}
+
+/*
+*   NAME: DISABLE
+*   PURPOSE: Disables the RTG interface
+*   CALLED: Called if the event interface matches the RTG Interface
+*
+*   PARMS PASSED:
+*
+*/
+template disable() {
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <interface> {
+                         <name> $ifpop;
+                         <disable>;
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            expr jcs:syslog("user.warning", "pop-link.slax[Warning]: ", message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "pop-link.slax[Error]: ", message);
+            }
+        }
+        else {
+            expr jcs:syslog("user.info", "pop-link.slax[Success]: ", "Successfully deactivated the interface");
+        }
+}
+/*
+*   NAME: ENABLE
+*   PURPOSE: Enables the RTG interface
+*   CALLED: Called after disable
+*
+*   PARMS PASSED:
+*
+*/
+template enable() {
+/*
+*
+*   XML structure for disabling the INTERFACE
+*
+*/
+        var $xml = {
+            <configuration> {
+                 <interfaces> {
+                     <interface> {
+                         <name> $ifpop;
+                         <disable delete="delete">;
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+        for-each ($results//xnm:warning) {
+            if (not(contains(message,"statement not found:"))) {
+            expr jcs:syslog("user.warning", "pop-link.slax[Warning]: ", message);
+            }
+        }
+        if ($results//xnm:error) {
+            for-each ($results//xnm:error) {
+                expr jcs:syslog("user.error", "pop-link.slax[Error]: ", message);
+            }
+        }
+        else {
+            expr jcs:syslog("user.info", "pop-link.slax[Success]: ", "Successfully activated the interface");
+        }
+}
+

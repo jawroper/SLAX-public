@@ -1,0 +1,145 @@
+/*
+*
+*    PURPOSE: Created for Caesars to locate all juniper devices and
+*             return each ones hostname, model type, and serial-number.
+*
+*    CREATED: 08/25/12
+*    BY: Jay Wilson (Sr Consulting Eng DC -- Americas)
+*    LAST MOD: 08/25/12
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ns exsl = "http://exslt.org/common";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "targets-file";
+        <description> "An XML file containing the devices to retrieve information from";
+    }
+    <argument> {
+        <name> "uid";
+        <description> "UserID on the remote system";
+    }
+    <argument> {
+        <name> "pwd";
+        <description> "UserID's password on the remote system";
+    }
+}
+param $targets-file;
+param $uid;
+param $pwd;
+param $debug;
+param $ddebug;
+
+match / {
+   if ($targets-file and $uid and $pwd) {
+/*
+*  Read in the contents of the targets-file
+*/
+   var $target-data = document($targets-file);
+   if ($ddebug) {
+       call jcs:dump($out=$target-data, $style="<>");
+   }
+/*
+*  for each target:
+*     open a connection
+*     retrieve the chassis and software information
+*     output that information to the screen
+*/
+   for-each ($target-data//ip) {
+       var $ip = .;
+       if ($debug) {
+           expr jcs:output($ip);
+       }
+       var $con = jcs:open($ip, $uid, $pwd);
+       var $crpc = <get-chassis-inventory>;
+       var $cres = jcs:execute($con, $crpc);
+       var $rrpc = <get-software-information>;
+       var $rres = jcs:execute($con, $rrpc);
+       expr jcs:output($rres//host-name, ",", $rres//product-model, ",", $cres/chassis/serial-number);
+       expr jcs:close($con);
+   }
+   }
+   else {
+      expr jcs:output("Missing one of the following arguments (uid, pwd, targerts-file)");
+   }
+}
+/*
+*  Dump a node-set
+*/
+template jcs:dump ($name, $out, $indent = "", $style)
+{
+    var $mydent = {
+        if ($name) {
+            expr $indent _ "  ";
+        } else {
+            expr $indent;
+        }
+    }
+    if ($name) {
+        expr jcs:output($indent, $name, " = {");
+    }
+    var $oq = {
+        if ($style == "<>") {
+            expr "<";
+        }
+    }
+    var $cq = {
+        if ($style == "<>") {
+            expr ">";
+        }
+    }
+
+    if (exsl:object-type($out) == "string") {
+        expr jcs:output($mydent, "'", $out, "';");
+
+    } else if (name($out)) {
+        var $text = $out/text();
+
+        if ($out/ *) {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+
+        } else if ($text) {
+            if (string-length($out) == 1 && starts-with($out, "\n")) {
+                expr jcs:output($mydent, $oq, name($out), $cq, ";");
+            } else {
+                expr jcs:output($mydent, $oq, name($out), $cq,
+                                " '", $text, "';");
+            }
+
+        } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+            expr jcs:output($mydent, $oq, name($out), $cq, ";");
+        } else {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+        }
+
+    } else if ($out/node()) {
+        for-each ($out/ *) {
+            call jcs:dump($out = ., $indent = $mydent);
+        }
+
+    } else if ($out/text()) {
+        expr jcs:output($mydent, .);
+    }
+
+    if ($name) {
+        expr jcs:output($indent, "}");
+    }
+}

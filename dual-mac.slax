@@ -1,0 +1,256 @@
+/*
+*
+*    NAME: DUAL-MAC.slax
+*    PURPOSE: Created for JNPR to modify the behavior
+*             of an Interface when a specific type of
+*             device is detected by LLDP-MED.
+*
+*
+*    CREATED: 03/05/12
+*    BY: Jay Wilson (Consulting Engineer - Americas Theater)
+*    LAST MOD: 03/05/12
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script.
+*  This argument is by the event attribute "interface-name"
+*  when the event triggers.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "ifname";
+            <description> "Event Interface";
+        }
+        <argument> {
+            <name> "event-type";
+            <description> "Event type (link-up or link-down)";
+        }
+        <argument> {
+            <name> "action";
+            <description> "MAC-limit action to set on the interface -- (d/l/n/s)";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "Any non-blank character turns on script debugging";
+        }
+}
+param $ifname;
+param $event-type;
+param $action;
+param $debug;
+
+match / {
+    <op-script-results> {
+        if ($ifname && $event-type && $action) {
+            var $loc-con = jcs:open();
+            if (not($loc-con)) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Not able to connect to local mgd");
+            }
+            else {
+                call process-commands($con=$loc-con);
+                expr jcs:close($loc-con);
+            }
+        }
+        else {
+            call param-check();
+        }
+     }
+}
+
+/*
+*   NAME: PROCESS-COMMANDS
+*   PURPOSE: commands to issue on the device
+*   CALLED: Called after params have been verified to exist
+*
+*   PARMS PASSED:
+*        $con = An open console connection used for all
+*               local RPC processing.
+*
+*/
+template process-commands($con) {
+    var $act = {
+        if ($action == "l") {
+            expr "log";
+        }
+        else if ($action == "d") {
+            expr "drop";
+        }
+        else if ($action == "n") {
+            expr "none";
+        }
+        else {
+            expr "shutdown";
+        }
+    }
+    if ($event-type == "down(2)") {
+/*
+*
+*   XML structure to decrease MAC limit on the interface and remove the inteface
+*   from the voice vlan
+*
+*/
+        var $xml = {
+            <configuration> {
+                <ethernet-switching-options> {
+                    <secure-access-port> {
+                        <interface> {
+                            <name>$ifname;
+                            <mac-limit> {
+                                <limit>"2";
+                                <action>$act;
+                            }
+                         }
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+        call check-results($results=$results, $call-type="DOWN", $if-type=$ifname);
+    }
+    else if ($event-type == "up(1)") {
+/*
+*
+*   XML structure to increase MAC limit on the interface and add the inteface
+*   from the voice vlan
+*
+*/
+        var $xml = {
+            <configuration> {
+                <ethernet-switching-options> {
+                    <secure-access-port> {
+                        <interface> {
+                            <name>$ifname;
+                            <mac-limit> {
+                                <limit>"3";
+                                <action>$act;
+                            }
+                         }
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+        call check-results($results=$results, $call-type="UP", $if-type=$ifname);
+    }
+    else {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Invalid EVENT-TYPE passed to the script");    }
+
+}
+/*
+*   NAME: CHECK-RESULTS
+*   PURPOSE: write a message based on the results of an jcs:executing
+*   CALLED: Called after each jcs:executing
+*
+*   PARMS PASSED:
+*        $results = the ouput from the jcs:execute
+*        $call-type = was this a local or remote executing
+*        $if-type = the interface the jcs:execute was used on
+*
+*/
+template check-results($results, $call-type, $if-type) {
+    var $syslog-type = "dual-mac.slax[I/W/E]: (" _ $call-type _ "/" _ $if-type _ ") ";
+    for-each ($results//xnm:warning) {
+        if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = $syslog-type, $where = "l", $message = message);
+        }
+    }
+    if ($results//xnm:error) {
+        for-each ($results//xnm:error) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = $syslog-type, $where = "l", $message = message);
+        }
+    }
+    else {
+        call write-output($level = "user.info", $id = "INFO: ", $type = $syslog-type, $where = "l", $message = "Successfully changed");
+
+    }
+}
+/*
+*   NAME: PARAM-CHECK
+*   PURPOSE: write messages for each missing param
+*   CALLED: Called if one of the required params is "null"
+*
+*   PARMS PASSED:
+*
+*/
+template param-check() {
+    if (not($ifname)) {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Missing required param 'ifname'");
+    }
+    if (not($event-type)) {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Missing required param 'event-type'");
+    }
+    if (not($action)) {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Missing required param 'action'");
+    }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if where to send output
+*                 "s"TDOUT
+*                  sys"l"og
+*                 "b"oth STDOUT and SYSLOG
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+     var $rwhere = {
+         if ($debug) {
+             expr "b";
+         }
+         else {
+             expr $where;
+         }
+     }
+     if ($rwhere == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else if ($rwhere == "l") {
+         expr jcs:syslog($level, $type, $message);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         expr jcs:output($stdmessage);
+     }         
+
+}

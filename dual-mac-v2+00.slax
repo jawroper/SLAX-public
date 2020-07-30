@@ -1,0 +1,551 @@
+/*
+*
+*    NAME: DUAL-MAC.slax
+*    PURPOSE: Created for JNPR to modify the behavior
+*             of an Interface when a specific type of
+*             device is detected by LLDP-MED.
+*
+*
+*    CREATED: 03/05/12
+*    BY: Jay Wilson (Consulting Engineer - Americas Theater)
+*    LAST MOD: 03/14/12
+*    BY: Jay Wilson
+*    VERSION: 1.11
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Added logic to check boot time
+*        V1.11 = Enchanced boot time logic
+*        V2.00 = Added bulk LLDP processing for
+*                when the device starts up
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+/*
+*
+*  Define the argument that will be passed into the script.
+*  This argument is by the event attribute "interface-name"
+*  when the event triggers.
+*
+*/
+var $arguments = {
+        <argument> {
+            <name> "interface";
+            <description> "Event Interface";
+        }
+        <argument> {
+            <name> "event-type";
+            <description> "Event type (link-up or link-down)";
+        }
+        <argument> {
+            <name> "action";
+            <description> "MAC-limit action to set on the interface -- (d/l/n/s)";
+        }
+        <argument> {
+            <name> "debug";
+            <description> "Any non-blank character turns on script debugging";
+        }
+}
+param $interface;
+param $event-type;
+param $action;
+param $debug;
+/*
+*
+*   Global variables
+*      min-macs - the minimum number of macs allowed on an interface
+*                 EX documentation recommends 2 because the system
+*                 takes 1 MAC for itself.
+*      max-macs - the maximum number of macs allowed on an interface
+*      boot-time - the number of minutes to allow to pass before
+*                  processing link up/down state changes. This is
+*                  done so that when a device boots, all LLDP-MED
+*                  neighbors can be processed in bulk instead of
+*                  1 at a time.
+*      device01 - device type to check lldp messages for
+*
+*/
+var $min-macs = 2;
+var $max-macs = 3;
+var $boot-time = 15;
+var $device01 = "poly";
+/*
+*
+*   The LLDP RPC returns .0 on an interface name, so we need to make
+*   sure that the interface name passed to the script has
+*   .0 on it.
+*
+*/
+var $ifname = {
+                 if (not(contains($interface,"."))) {
+                    expr $interface _ ".0";
+                 }
+                 else {
+                    expr $interface;
+                 }
+              }
+/*
+*
+*  1st check is to make sure all params have been passed to the script
+*
+*/
+match / {
+    <op-script-results> {
+        if ($ifname && $event-type && $action) {
+            var $loc-con = jcs:open();
+            if (not($loc-con)) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Not able to connect to local mgd");
+            }
+            else {
+/*
+*
+*  get how long the system has been up in hours and minutes
+*  if total time is < $boot-time, then do a bulk LLDP check
+*
+*/
+                var $rpc = <get-system-uptime-information> {
+                           }
+                var $good = jcs:execute($loc-con,$rpc);
+                var $tmp1 = "UPTIME = " _ $good//system-booted-time/time-length;
+                var $hours = substring-before($good//system-booted-time/time-length,":");
+                var $after = substring-after($good//system-booted-time/time-length,":");
+                var $minutes = substring-before($after,":");
+                if ($debug) {
+                    call write-output($level = "user.info", $id = "INFO: ", $type = "dual-mac.slax[Info]: ", $where = "s", $message = $tmp1);
+                }
+                if (($minutes > $boot-time) || (not($hours =="00"))) {
+                    if ($event-type == "down(2)") {
+                        call process-link-change-down($con=$loc-con);
+                    }
+                    else if ($event-type == "up(1)") {
+                        call process-link-change-up($con=$loc-con);
+                    }
+                    else {
+                        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Invalid EVENT-TYPE passed to the script");
+                    }
+                }
+                else {
+                    call write-output($level = "user.info", $id = "INFO: ", $type = "dual-mac.slax[Info]: ", $where = "b", $message = "Process Boot Startup");
+                    call process-startup($con=$loc-con);
+                }
+                expr jcs:close($loc-con);
+            }
+        }
+        else {
+            call param-check();
+        }
+     }
+}
+
+/*
+*   NAME: PROCESS-LINK-CHANGE-UP
+*   PURPOSE: commands to issue on the device when link state
+*            changes to up
+*   CALLED: Called after params have been verified to exist
+*           and if the system has been up for longer than the
+*           value in $boot-time
+*
+*   PARMS PASSED:
+*        $con = An open console connection used for all
+*               local RPC processing.
+*
+*/
+template process-link-change-up($con) {
+    var $act = {
+        if ($action == "l") {
+            expr "log";
+        }
+        else if ($action == "d") {
+            expr "drop";
+        }
+        else if ($action == "n") {
+            expr "none";
+        }
+        else {
+            expr "shutdown";
+        }
+    }
+/*
+*
+*   Check for lldp neighbor information on the interface passed in
+*   There is no RPC to call for LLDP information on a specific 
+*   interface, so the script has to loop through all LLDP responses
+*   and check for a match.
+*
+*/
+    var $lldp-rpc=<get-lldp-neighbors-information> {
+        }
+    var $lldp-results = jcs:execute($con,$lldp-rpc);
+    for-each($lldp-results/lldp-neighbor-information) {
+            if ($debug) {
+               var $dtmp1 = "Interface testing against " _ $ifname _ " : LLDP Local Interface currently being tested is " _ lldp-local-interface; 
+               call write-output($level = "user.info", $id = "INFO: ", $type = "dual-mac.slax[Info]: ", $where = "b", $message = $dtmp1);
+            }
+            if (lldp-local-interface == $ifname) {
+/*
+*
+*   XML structure to increase MAC limit on the interface
+*
+*/
+                var $xml = {
+                    <configuration> {
+                        <ethernet-switching-options> {
+                            <secure-access-port> {
+                                <interface> {
+                                    <name>$ifname;
+                                    <mac-limit> {
+                                        <limit>$max-macs;
+                                        <action>$act;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+/*
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+                var $results := {
+                    call jcs:load-configuration($connection = $con, $configuration = $xml);
+                }
+                call check-results($results=$results, $call-type="UP", $if-type=$ifname);
+            }
+        }
+}
+/*
+*   NAME: PROCESS-LINK-CHANGE-DOWN
+*   PURPOSE: commands to issue on the device when link state
+*            changes to down
+*   CALLED: Called after params have been verified to exist
+*           and if the system has been up for longer than the
+*           value in $boot-time
+*
+*   PARMS PASSED:
+*        $con = An open console connection used for all
+*               local RPC processing.
+*
+*/
+template process-link-change-down($con) {
+    var $act = {
+        if ($action == "l") {
+            expr "log";
+        }
+        else if ($action == "d") {
+            expr "drop";
+        }
+        else if ($action == "n") {
+            expr "none";
+        }
+        else {
+            expr "shutdown";
+        }
+    }
+/*
+*
+*   XML structure to decrease MAC limit on the interface
+*
+*/
+        var $xml = {
+            <configuration> {
+                <ethernet-switching-options> {
+                    <secure-access-port> {
+                        <interface> {
+                            <name>$ifname;
+                            <mac-limit> {
+                                <limit>$min-macs;
+                                <action>$act;
+                            }
+                         }
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+        call check-results($results=$results, $call-type="DOWN", $if-type=$ifname);
+}
+/*
+*   NAME: PROCESS-STARTUP
+*   PURPOSE: to process bulk processing of LLDP-MED neighbors
+*   CALLED: Called after params have been verified to exist
+*           and if the system has been up for less than the
+*           value in $boot-time
+*
+*   PARMS PASSED:
+*        $con = An open console connection used for all
+*               local RPC processing.
+*
+*/
+template process-startup($con) {
+    var $act = {
+        if ($action == "l") {
+            expr "log";
+        }
+        else if ($action == "d") {
+            expr "drop";
+        }
+        else if ($action == "n") {
+            expr "none";
+        }
+        else {
+            expr "shutdown";
+        }
+    }
+    var $lldp-rpc=<get-lldp-neighbors-information> {
+            }
+    var $lldp-results = jcs:execute($con,$lldp-rpc);
+
+/*
+*
+*   XML structure to change MAC limit on the interface and remove the inteface
+*   from the voice vlan
+*
+*/
+        var $xml = {
+            <configuration> {
+                <ethernet-switching-options> {
+                    <secure-access-port> {
+                       for-each($lldp-results/lldp-neighbor-information) {
+                           if (contains(lldp-local-interface,"ge-")) {
+                              var $RmtSysName = {
+                                  call lower-case($str = lldp-remote-system-name);
+                              }
+                              if (contains($RmtSysName,"poly")) {
+                                  <interface> {
+                                      <name>lldp-local-interface;
+                                      <mac-limit> {
+                                          <limit>$max-macs;
+                                          <action>$act;
+                                      }
+                                  }
+                              }
+                           }
+                       }
+                     }
+                 }
+            }
+        }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+        var $results := {
+            call jcs:load-configuration($connection = $con, $configuration = $xml);
+        }
+
+        call check-results($results=$results, $call-type="STARTUP", $if-type=$ifname);
+
+}
+/*
+*   NAME: CHECK-RESULTS
+*   PURPOSE: write a message based on the results of an jcs:executing
+*   CALLED: Called after each jcs:executing
+*
+*   PARMS PASSED:
+*        $results = the ouput from the jcs:execute
+*        $call-type = was this a local or remote executing
+*        $if-type = the interface the jcs:execute was used on
+*
+*/
+template check-results($results, $call-type, $if-type) {
+    var $syslog-type = "dual-mac.slax[I/W/E]: (" _ $call-type _ "/" _ $if-type _ ") ";
+    for-each ($results//xnm:warning) {
+        if (not(contains(message,"statement not found:"))) {
+            call write-output($level = "user.warning", $id = "WARNING: ", $type = $syslog-type, $where = "l", $message = message);
+        }
+    }
+    if ($results//xnm:error) {
+        for-each ($results//xnm:error) {
+            call write-output($level = "user.error", $id = "ERROR: ", $type = $syslog-type, $where = "l", $message = message);
+        }
+    }
+    else {
+        call write-output($level = "user.info", $id = "INFO: ", $type = $syslog-type, $where = "l", $message = "Successfully changed");
+
+    }
+}
+/*
+*   NAME: PARAM-CHECK
+*   PURPOSE: write messages for each missing param
+*   CALLED: Called if one of the required params is "null"
+*
+*   PARMS PASSED:
+*
+*/
+template param-check() {
+    if (not($ifname)) {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Missing required param 'ifname'");
+    }
+    if (not($event-type)) {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Missing required param 'event-type'");
+    }
+    if (not($action)) {
+        call write-output($level = "user.error", $id = "ERROR: ", $type = "dual-mac.slax[Error]: ", $where = "l", $message = "Missing required param 'action'");
+    }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if where to send output
+*                 "s"TDOUT
+*                  sys"l"og
+*                 "b"oth STDOUT and SYSLOG
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+     var $rwhere = {
+         if ($debug) {
+             expr "b";
+         }
+         else {
+             expr $where;
+         }
+     }
+     if ($rwhere == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else if ($rwhere == "l") {
+         expr jcs:syslog($level, $type, $message);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         expr jcs:output($stdmessage);
+     }         
+
+}
+/*
+*   NAME: LOWER-CASE
+*   PURPOSE: To convert a string into lower case
+*   CALLED:  Before checking a string for a specific
+*            value. 
+*
+*   PARMS PASSED: 
+*     $str = the string to convert
+* 
+*/
+template lower-case ($str) {
+    var $result = translate( $str, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz" );
+    expr $result;
+}
+
+/*
+*   NAME: UPPER-CASE
+*   PURPOSE: To convert a string into upper case
+*   CALLED:  Before checking a string for a specific
+*            value. 
+*
+*   PARMS PASSED: 
+*     $str = the string to convert
+* 
+*/
+template upper-case ($str) {
+    var $result = translate( $str, "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ" );
+    expr $result;
+}
+/*
+*   NAME: DUMP
+*   PURPOSE: Print the output from a RPC
+*   CALLED: Called by PING-LOOP if debug is set to 5
+*
+*   PARMS PASSED:
+*        $out = what varible to display
+*        $style = "<>" means XML, empty means JUNOS
+*        $name = a string that is prepended to any output
+*        $indent = spacing between $name and output
+*/
+template jcs:dump ($name, $out, $indent = "", $style)
+{
+    var $mydent = {
+        if ($name) {
+            expr $indent _ "  ";
+        } else {
+            expr $indent;
+        }
+    }
+    if ($name) {
+        expr jcs:output($indent, $name, " = {");
+    }
+    var $oq = {
+        if ($style == "<>") {
+            expr "<";
+        }
+    }
+    var $cq = {
+        if ($style == "<>") {
+            expr ">";
+        }
+    }
+
+    if (exsl:object-type($out) == "string") {
+        expr jcs:output($mydent, "'", $out, "';");
+
+    } else if (name($out)) {
+        var $text = $out/text();
+
+        if ($out/ *) {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+
+        } else if ($text) {
+            if (string-length($out) == 1 && starts-with($out, "\n")) {
+                expr jcs:output($mydent, $oq, name($out), $cq, ";");
+            } else {
+                expr jcs:output($mydent, $oq, name($out), $cq,
+                                " '", $text, "';");
+            }
+
+        } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+            expr jcs:output($mydent, $oq, name($out), $cq, ";");
+        } else {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+        }
+
+    } else if ($out/node()) {
+        for-each ($out/ *) {
+            call jcs:dump($out = ., $indent = $mydent);
+        }
+
+    } else if ($out/text()) {
+        expr jcs:output($mydent, .);
+    }
+
+    if ($name) {
+        expr jcs:output($indent, "}");
+    }
+}

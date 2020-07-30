@@ -1,0 +1,112 @@
+/*
+*
+*    NAME: bgp-summary.slax
+*    PURPOSE: Created for UCSD to enhance the output of the
+*             "show bgp summary" command.
+*
+*    CREATED: 10/09/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 10/13/09
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+match / {
+    <op-script-results> {
+/*
+*
+*  RPC that returns the "show bgp summary" output
+*
+*/
+    var $rpc = <get-bgp-summary-information> {
+    }
+    var $summary = jcs:invoke($rpc);
+/*
+*
+*  Process the RIB information
+*
+*/
+    <output> "Table          Tot Paths  Act Paths Suppressed    History  Damp State    Pending";
+    for-each ($summary/bgp-rib) {
+        <output> jcs:printf("%-15s %8d %10d %10d %10d %11d %10d\n",name,total-prefix-count,active-prefix-count,suppressed-prefix-count,history-prefix-count,damped-prefix-count,pending-prefix-count);
+    }
+/*
+*
+*   Process each PEER and add the interface and decscription information
+*
+*/
+    <output> "Peer                 AS      InPkt     OutPkt    OutQ   Flaps Last Up/Dwn State   Interface        Description";
+    for-each ($summary/bgp-peer) {
+/*
+*
+*   Go get the interface the PEER came from
+*
+*/
+       var $interface = {
+           call get-route($peer = peer-address);
+       }
+/*
+*
+*   Go get the logical interface DESCRIPTION
+*
+*/
+       var $desc = {
+           call get-desc($interface = $interface);
+       }
+       var $state = substring(peer-state,1,6);
+        <output> jcs:printf("%-15s   %5d %10d %10d %7d %7d %11s %-6s  %-15s  %-s\n",peer-address,peer-as,input-messages,output-messages,route-queue-count,flap-count,elapsed-time,$state,$interface,$desc);
+
+    }
+    }
+}
+/*
+*   NAME: GET-ROUTE
+*   PURPOSE: To return the interface that a BGP peer is learned from
+*   CALLED: Called for each BGP peer returned from the get-bgp-summary
+*           RPC
+*
+*   PARMS PASSED:
+*        $peer = the BGP peer to retrieve the interface for from
+*                the route table
+*
+*/
+template get-route($peer) {
+    var $cmd = {
+        <command> 'show route ' _ $peer;
+    }
+    var $route = jcs:invoke($cmd);
+    for-each ($route/route-table/rt/rt-entry) {
+        if (protocol-name == "Direct" || protocol-name == "BGP") {
+            for-each(./nh) {
+                expr via;
+            }
+        }
+    }
+
+}
+/*
+*   NAME: GET-DESC
+*   PURPOSE: To retrieve the description field for a given logical interface
+*   CALLED: Called for each "interface" returned from the route look-up
+*           for each BGP peer
+*
+*   PARMS PASSED:
+*        $interface = logical interface to retrieve the
+*                     description from
+*
+*/
+template get-desc($interface = $interface) {
+    var $rpc = <get-interface-information> {
+               <interface-name> $interface;
+    }
+    var $interface-output = jcs:invoke($rpc);
+    expr $interface-output/logical-interface/description;
+}

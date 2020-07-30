@@ -1,0 +1,36 @@
+version 1.0;
+
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+
+import "../import/junos.xsl";
+var $arguments = {
+<argument>{
+ <name> "val";
+ <description> "decimal value to conver to hex ";
+}
+}
+
+param $val = 10;
+
+match / {
+    var $hexDigits = "0123456789ABCDEF";
+    <op-script-results> {
+
+     <output method = "text"> {
+        call toHex($decimalNumber = $val);
+          }
+     }
+}
+template toHex ($decimalNumber) {
+
+
+     var $hexDigits = "0123456789ABCDEF";
+
+
+    if ($decimalNumber >= 16) {
+        call toHex($decimalNumber = floor($decimalNumber div 16));
+    }
+    expr substring($hexDigits,($decimalNumber mod 16) + 1, 1);
+}

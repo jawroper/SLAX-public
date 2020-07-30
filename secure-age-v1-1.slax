@@ -1,0 +1,291 @@
+/*
+*
+*    PURPOSE: To mimmic Cisco's "switchport port-security aging" command
+*
+*    CREATED: 05/17/10
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 05/19/10
+*    BY: Jay Wilson
+*    VERSION: 1.10
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.10 = Added Syslogging of removed MAC addresses
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ns exsl = "http://exslt.org/common";
+import "../import/junos.xsl";
+var $arguments = {
+    <argument> {
+        <name> "interfaces";
+        <description> "List of Interfaces seperated by a , and the last entry is a (z)";
+    }
+    <argument> {
+        <name> "age";
+        <description> "Max age time in seconds of a MAC address";
+    }
+    <argument> {
+        <name> "syslog";
+        <description> "facility.severity combination";
+    }
+    <argument> {
+        <name> "debug";
+        <description> "Turns on debugging (1, 3, 5)";
+    }
+}
+
+
+param $interfaces;
+param $age;
+param $debug;
+param $syslog;
+
+/* 
+*  Using a connection to improve script processing speed
+*/
+var $connection = jcs:open();
+
+match / {
+    if (not($age) || not($interfaces)) {
+       call write-output($message = "Missing a required Parameter!");
+    }
+    else if (not(contains($interfaces,",z"))) {
+       call write-output($message = "Interfaces Parmeter must end with a ,z");
+    }
+    else {
+/*
+*
+*  RPC that returns the "show ethernet-switching table" output
+*
+*/
+    var $rpc = <get-ethernet-switching-table-information> {
+    }
+    var $switch-output = jcs:execute($connection,$rpc);
+    if ($debug == 5) {
+         call jcs:dump($out = $switch-output,$style="<>");
+    }
+/*
+*
+*  Process the Interfaces specified 1 at a time
+*
+*/
+    call main-loop($i-list = $interfaces, $table=$switch-output, $con=$connection);
+    }
+/*
+*
+*   Close the connection before existing the script
+*
+*/
+    expr jcs:close($connection);
+}
+/*
+*   NAME: MAIN-LOOP
+*   PURPOSE: To loop until all supplied Interfaces have
+*            been processed.
+*   CALLED: Called after script initialization and by itself.
+*
+*   PARMS PASSED:
+*        $i-list = remaining list of Interfaces to process
+*        $table = results of the get-ethernet-switching-table
+*                 rpc call.  It's more efficent to call it 
+*                 once and pass the results to a template.
+*        $con = An open console connection used for all
+*               RPC processing.
+*/
+template main-loop($i-list, $table, $con) {
+    if ($debug) {
+         expr jcs:output("In main-loop");
+    }
+/*
+*
+*  "z" should be the terminating value on the Interfaces parm
+*  when "z" is reached, stop processing 
+*  if "z" hasn't been reached, grab the next interface to process
+*
+*/
+    var $current-interface = { if ($i-list == "z") {
+                                  expr "z";
+                               }
+                               else {
+                                  expr substring-before($i-list,",");
+                               }
+                             }
+    var $new-list =  { if ($current-interface != "z") {
+                          expr substring-after($i-list,",");
+                       }
+                       else {
+                          expr "z";
+                       }
+                     }
+    if ($debug) {
+        expr jcs:output("Current == ", $current-interface);
+        expr jcs:output("New == ", $new-list);
+    }
+/*
+*
+*  if not "z" then see if the interface supplied matches an interface
+*  in the ethernet-switching table
+*
+*/
+    if ($current-interface != "z") {
+        call find-interface($interface=$current-interface,$table=$table,$con=$con);
+        call main-loop($i-list=$new-list,$table=$table, $con=$con);
+    } 
+}
+/*
+*   NAME: FIND-INTERFACE
+*   PURPOSE: Loops through the output from the ethernet-switching-table
+*   CALLED: Called is "z" has not been reached
+*
+*   PARMS PASSED:
+*        $interface = interface being looked for in the table
+*        $table = results of the get-ethernet-switching-table
+*                 rpc call.  It's more efficent to call it 
+*                 once and pass the results to a template.
+*        $con = An open console connection used for all
+*               RPC processing.
+*
+*/
+template find-interface($interface, $table, $con) 
+{
+    var $z-interface = $interface _ ".0";
+       expr jcs:output($z-interface);
+    for-each($table/ethernet-switching-table/mac-table-entry/mac-interfaces-list[mac-interfaces == $z-interface]) {
+        if ($debug) {
+           expr jcs:output("Interface found");
+           expr jcs:output("  AGE == ", ./../mac-age);
+           expr jcs:output("  MAC == ", ./../mac-address);
+        }
+/*
+*
+*   If the age of the entry in the table is equal to or older than
+*   the "age" supplied, then clear the entry from the table
+*
+*/
+        if (./../mac-age/@junos:seconds >= $age) {
+            if ($debug) {
+               expr jcs:output("  AGE exceeded");
+            }
+            var $cmd = {
+                   <command> 'clear ethernet-switching table mac ' _ ./../mac-address;
+                       }
+            var $cmd-output = jcs:execute($con,$cmd);
+            if ($syslog) {
+                var $message = "SECURE-AGE: " _ ./../mac-address _ " AGE " _ ./../mac-age _ " Interface " _ $z-interface;
+                expr jcs:syslog($syslog, $message);
+            }
+        }
+    }
+}
+/*
+*   NAME: DUMP
+*   PURPOSE: Print the output from a RPC
+*   CALLED: Called by PING-LOOP if debug is set to 7
+*
+*   PARMS PASSED:
+*        $out = what varible to display
+*        $style = "<>" means XML, empty means JUNOS
+*        $name = a string that is prepended to any output
+*        $indent = spacing between $name and output
+*/
+template jcs:dump ($name, $out, $indent = "", $style)
+{
+    var $mydent = {
+        if ($name) {
+            expr $indent _ "  ";
+        } else {
+            expr $indent;
+        }
+    }
+    if ($name) {
+        expr jcs:output($indent, $name, " = {");
+    }
+    var $oq = {
+        if ($style == "<>") {
+            expr "<";
+        }
+    }
+    var $cq = {
+        if ($style == "<>") {
+            expr ">";
+        }
+    }
+
+    if (exsl:object-type($out) == "string") {
+        expr jcs:output($mydent, "'", $out, "';");
+
+    } else if (name($out)) {
+        var $text = $out/text();
+
+        if ($out/ *) {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+
+        } else if ($text) {
+            if (string-length($out) == 1 && starts-with($out, "\n")) {
+                expr jcs:output($mydent, $oq, name($out), $cq, ";");
+            } else {
+                expr jcs:output($mydent, $oq, name($out), $cq,
+                                " '", $text, "';");
+            }
+
+        } else if (string-length($out) == 0
+                   || string-length($out) == 1 && starts-with($out, "\n")) {
+            expr jcs:output($mydent, $oq, name($out), $cq, ";");
+        } else {
+            expr jcs:output($mydent, $oq, name($out), $cq, " {");
+            for-each ($out/ *) {
+                call jcs:dump($out = ., $indent = "  " _ $mydent);
+            }
+            expr jcs:output($mydent, "}");
+        }
+
+    } else if ($out/node()) {
+        for-each ($out/ *) {
+            call jcs:dump($out = ., $indent = $mydent);
+        }
+
+    } else if ($out/text()) {
+        expr jcs:output($mydent, .);
+    }
+
+    if ($name) {
+        expr jcs:output($indent, "}");
+    }
+}
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+
+}

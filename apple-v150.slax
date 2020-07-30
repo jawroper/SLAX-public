@@ -1,0 +1,247 @@
+/*
+*
+*    NAME: apple-ff.slax
+*    PURPOSE: Created for Apple to responded to an RPM failure
+*             by installing a FF.
+*
+*    CREATED: 07/13/11
+*    BY: Jay Wilson
+*    LAST MOD: 09/22/11
+*    BY: Jay Wilson
+*    VERSION: 1.50
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*        V1.50 = Additions (Major)
+*                check for the FF already being removed
+*                add a check for interface coming backup and 
+*                    reapply the FF
+*
+*/
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+import "../import/junos.xsl";
+
+/*
+*
+*   Parms that are passed in from the configuration or cli
+*
+*/
+var $arguments = {
+    <argument> {
+        <name> "ff";
+        <description> "Name of the FF to remove/install";
+    }
+    <argument> {
+        <name> "interface";
+        <description> "Interface to apply the FF to";
+    }
+    <argument> {
+        <name> "debug";
+        <description> "Any non-blank character will turn on debug";
+    }
+    <argument> {
+        <name> "up-down";
+        <description> "Is this an up EVENT or a down EVENT";
+    }
+    <argument> {
+        <name> "probe";
+        <description> "Name of the RPM probe";
+    }
+    <argument> {
+        <name> "test";
+        <description> "Name of the RPM probe test";
+    }
+    <argument> {
+        <name> "script";
+        <description> "Name of the script";
+    }
+}
+param $ff;
+param $interface;
+param $debug;
+param $up-down;
+param $probe;
+param $test;
+param $script;
+
+match / {
+    <event-script-results> {
+
+    if ($ff and $interface and $probe and $test and $up-down) {
+/*
+*
+*   Check to see if the ff has already been applied.
+*     0 = false / 1 = true
+*
+*/
+        var $exists = 0;
+        if ($exists == 0) {
+
+/*
+*
+*   Open a connection with mgd
+*
+*/
+            var $con = jcs:open();
+            if (not($con)) {
+                call write-output($level = "user.error", $id = "ERROR: ", $type = "APPLE-FF.slax[Error]: ", $where = "b", $message = "Not able to connect to local mgd");
+            }
+/*
+*
+*   XML structure for adding the FF
+*
+*/
+            var $xml = {
+               <configuration> {
+                    <interfaces> {
+                        <interface> {
+                            <name> $interface;
+                               <unit> {
+                                  <name> "0";
+                                     <family> {
+                                        <inet> {
+                                           if ($up-down == "down") {
+                                              <filter delete="delete">;
+                                           }
+                                           else if ($up-down == "up") {
+                                              <filter> {
+                                                 <input> {
+                                                    <filter-name> $ff;
+                                                 }
+                                              }
+                                           } 
+                                        }
+                                     }
+                               }
+                        }
+                     }
+                     <event-options> {
+                         <policy> {
+                             <name> "apple";
+                             if ($up-down == "down") {
+                                <events delete="delete"> "PING_TEST_FAILED";
+                                <events> "PING_TEST_COMPLETED";
+                                <then> {
+                                    <event-script> {
+                                        <name> $script;
+                                        <arguments> {
+                                            <name>"up-down";
+                                            <value>"up";
+                                        }
+                                    }
+                                }
+                             }
+                             else if ($up-down == "up") {
+                                <events delete="delete"> "PING_TEST_COMPLETED";
+                                <events> "PING_TEST_FAILED";
+                                <then> {
+                                    <event-script> {
+                                        <name> $script;
+                                        <arguments> {
+                                            <name>"up-down";
+                                            <value>"down";
+                                        }
+                                    }
+                                }
+                             }
+                         }
+                     }
+                     <services> {
+                         <rpm> {
+                             <probe> {
+                                 <name>$probe;
+                                 <test> {
+                                     <name>$test;
+                                     if ($up-down == "down") {
+                                        <traps>"test-completion";
+                                        <traps delete="delete">"test-failure";
+                                     }
+                                     else if ($up-down == "up"){
+                                        <traps delete="delete">"test-completion";
+                                        <traps>"test-failure";
+                                     }
+                                     else {
+                                         call write-output($level = "user.warning", $id = "WARNING: ", $type = "APPLE-FF.SLAX[Warning]: ", $where = "b", $message = "OTHER: something is wrong with the script");
+                                     }
+                                 }
+                             }
+                         }
+                      }
+                }
+            }
+/*
+*
+*   Use load-configuration template defined in junos.xsl to load and
+*   commit the configuration
+*
+*/
+            var $results := {
+                call jcs:load-configuration($connection = $con, $configuration = $xml);
+            }
+
+/*
+*
+*   Check the results and process them
+*
+*/
+
+            for-each ($results//xnm:warning) {
+                if (not(contains(message,"statement not found:"))) {
+                    call write-output($level = "user.warning", $id = "WARNING: ", $type = "APPLE-FF.SLAX[Warning]: ", $where = "b", $message = message);
+                }
+            }
+            if ($results//xnm:error) {
+                for-each ($results//xnm:error) {
+                    call write-output($level = "user.error", $id = "ERROR: ", $type = "APPLE-FF.SLAX[Error]: ", $where = "b", $message = message);
+                }
+            }
+            else {
+                call write-output($level = "user.info", $id = "INFO: ", $type = "APPLE-FF.SLAX[Success]: ", $where = "b", $message = "Successfully processed the filter");
+            }
+
+/*
+*
+*   Close the mgd connection
+*
+*/
+            expr jcs:close($con);
+
+        }
+    }
+    else {
+        call write-output($where = "s", $type = "APPLE-FF.SLAX[Info]: ", $message = "Missing Script Arguments");
+    } 
+    }
+}
+
+/*
+*   NAME: WRITE-OUTPUT
+*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*            the parms passed to it.
+*   CALLED: Called after the XML changes have been submitted to MGD process.
+*
+*
+*   PARMS PASSED:
+*        $level = The syslog message level
+*        $id = Standout message ID
+*        $type = The string identifying the type of message
+*        $message = The string to print out 
+*        $where = Used to specify if "b"oth STDOUT and SYSLOG
+*                 should be written to or only "S"TDOUT
+*
+*/
+template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where = "b", $message) {
+     var $stdmessage = $id _ $message;
+
+     if ($where == "s") {
+        expr jcs:output($stdmessage);
+     }
+     else {
+         expr jcs:syslog($level, $type, $message);
+         
+         expr jcs:output($stdmessage);
+     }         
+}

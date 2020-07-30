@@ -1,0 +1,152 @@
+/*
+*
+*    NAME: red5.slax
+*    PURPOSE: Created to demonstrate the of power commit scripts
+*             for enforcing company standards.
+*
+*    CREATED: 02/14/09
+*    BY: Jay Wilson (Solutions Architect - Western Area)
+*    LAST MOD: 02/14/09
+*    BY: Jay Wilson
+*    VERSION: 1.00
+*
+*    MODIFICATION HISTORY:
+*        V1.00 = Initial release
+*
+*/ 
+version 1.0;
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+
+import "../import/junos.xsl";
+
+match configuration {
+/*
+*
+*   Save the node structures that will be checked
+*   This is done to avoid moving up and down the node
+*     structure.
+*
+*/
+var $interfaces = interfaces;
+var $vlans = vlans;
+var $groups = groups;
+/*
+*
+*   Verify that standard configuration settings have
+*      be included in the configuration file.
+*   
+*   Make sure the standard "interface" settings are
+*      applied to all interfaces.
+*
+*/
+    if (not($groups[name="standard-settings"])) {
+        call error-if-missing($must = $groups[name="standard-settings"], $before-message = "Missing Standard Configuration Settings\n\nPlease load merge ftp://anonymous:xxx@192.168.1.2//standard-settings\n\n" );
+    }
+    else {
+        <change> {
+          <interfaces> {
+              <apply-groups> "standard-settings";
+          }
+          <protocols> {
+              <apply-groups> "standard-settings";
+          }
+        }
+    }
+
+/*
+*
+*   Verify that interfaces that have been touched have a
+*     description field defined.
+*   
+*   If no description, then print a error message per
+*     interface that is missing the field.
+*
+*/
+    for-each ($interfaces/interface) {
+        if (contains(./name,"ge-") || contains(./name,"xe-") || contains(./name,"ae") || contains(./name,"vlan")) {
+            call error-if-missing($must = ./description, $before-message = "Interface ", $name = ./name, $message = " missing mandatory DESCRIPTION statement\n" );
+        }
+
+    }
+
+/*
+*
+*   Verify that all vlan names adhere to company naming
+*     standard BLD-###_FLR-###, expect for those excluded.
+*
+*   If a vlan name violates the standard, then 
+*     print an error message for each vlan name
+*     not in adherence.
+*
+*/
+    for-each ($vlans/vlan) {
+        if (not(name == "mgmt")) {
+            var $namebl = { 
+                call parse-vlan($name = name, $string = "BLD-###_FLR-###");
+            }
+                call error-if-missing($must = contains($namebl,"1"), $before-message = "VLAN (", $name = ./name, $message = ") violates naming standard (BLD-###_FLR-###)\n" );
+        }
+    }
+}
+
+/*
+*   NAME: 
+*   PURPOSE: Verify that the "item" passes inspection and if
+*            it doesn't, print an error message
+*
+*   CALLED: Called for all validation processing
+*
+*   PARMS PASSED:
+*        $must = the "item" that must exist or the error message
+*                will be triggered.
+*        $before-message = literal string to print before the
+*                          "item" variable is printed.
+*        $name = the variable containing the "item".
+*        $message = literal string to print after the "item"
+*                   variable.  Should describe what the violation
+*                   is.
+*
+*/
+template error-if-missing ($must, $before-message, $name, $message = "\n") {
+    
+    if (not($must)) {
+        <xnm:error> {
+            <message> {
+                expr $before-message;
+                expr $name;
+                expr $message;
+            }
+        }
+    }
+}
+
+
+/*
+*   NAME: 
+*   PURPOSE: Checks vlan names against a pattern string.
+*
+*   CALLED: Called for all defined vlans
+*
+*   PARMS PASSED:
+*        $name = vlan name to check
+*        $string = pattern string containing the company
+*                  approved "standard" format
+*
+*   RETURN: "1" if approved
+*
+*
+*/
+template parse-vlan ($name, $string) {
+    if ($string && (string-length($name) == string-length($string))) {
+        var $hdn = substring($name,1,4);
+        var $hds = substring($string,1,4);
+        var $mdn = substring($name,8,5);
+        var $mds = substring($string,8,5);
+        if (contains($hdn,$hds) && contains($mdn,$mds)) {
+           expr "1";
+        }
+    }
+}
+
