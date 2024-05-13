@@ -1,6 +1,6 @@
 /*
 *
-*    PURPOSE: Created for Apple to be able to load a JUNOS configuration
+*    PURPOSE: Created for ? to be able to load a JUNOS configuration
 *             that is in XML format into a switch.
 *
 *
@@ -100,12 +100,12 @@ match / {
     }
     else {
         call write-output($where = "s", $message = "No file and/or Server was specified!");
-    } 
+    }
 }
 
 /*
 *   NAME: WRITE-OUTPUT
-*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*   PURPOSE: Writes a message to standard and/or the syslog depending on
 *            the parms passed to it.
 *   CALLED: Called after the XML changes have been submitted to MGD process.
 *
@@ -114,7 +114,7 @@ match / {
 *        $level = The syslog message level
 *        $id = Standout message ID
 *        $type = The string identifying the type of message
-*        $message = The string to print out 
+*        $message = The string to print out
 *        $where = Used to specify if "b"oth STDOUT and SYSLOG
 *                 should be written to or only "S"TDOUT
 *
@@ -126,8 +126,8 @@ template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where 
         expr jcs:output($stdmessage);
      }
      else {
-         expr jcs:syslog($level, $type, $message);     
+         expr jcs:syslog($level, $type, $message);
          expr jcs:output($stdmessage);
-     }         
+     }
 
 }

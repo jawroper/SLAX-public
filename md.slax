@@ -1,7 +1,7 @@
 /*
 *
 *    NAME: mb.slax
-*    PURPOSE: Created for Apple as a wrapper for working with the
+*    PURPOSE: Created for ? as a wrapper for working with the
 *             PFE commands specific to micoburst (aka Incast) buffer
 *             issues.
 *
@@ -73,7 +73,7 @@ match / {
           call issue_command($con=$con);
           expr jcs:close($con);
        }
-     
+
     }
 }
 
@@ -88,7 +88,7 @@ match / {
 *
 */
 template issue_command($con) {
-   
+
    if ($action) {
       if (not($action == "start") and not($action == "stop")) {
          call write-output($level = "user.error", $id = "ERROR: ", $type = "mb.slax[Error]: ", $where = "b", $message = "Action must be start or stop");
@@ -160,7 +160,7 @@ template issue_command($con) {
 
 /*
 *   NAME: WRITE-OUTPUT
-*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*   PURPOSE: Writes a message to standard and/or the syslog depending on
 *            the parms passed to it.
 *   CALLED: Called after the XML changes have been submitted to MGD process.
 *
@@ -169,7 +169,7 @@ template issue_command($con) {
 *        $level = The syslog message level
 *        $id = Standout message ID
 *        $type = The string identifying the type of message
-*        $message = The string to print out 
+*        $message = The string to print out
 *        $where = Used to specify if "b"oth STDOUT and SYSLOG
 *                 should be written to or only "S"TDOUT
 *
@@ -182,9 +182,8 @@ template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where 
      }
      else {
          expr jcs:syslog($level, $type, $message);
-         
+
          expr jcs:output($stdmessage);
-     }         
+     }
 
 }
-

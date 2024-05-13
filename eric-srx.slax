@@ -1,7 +1,7 @@
 /*
 *
 *    NAME: eric-srx.slax
-*    PURPOSE: Created for Eric to disable/enable interfaces
+*    PURPOSE: Created for ? to disable/enable interfaces
 *             on an SRX based on specific events occurring.
 *
 *
@@ -88,7 +88,7 @@ match / {
             call enable;
         }
         else {
-            expr jcs:syslog($syslog-level, "eric-srx.slax[DEBUG]: ", "Invalid action passed to the script"); 
+            expr jcs:syslog($syslog-level, "eric-srx.slax[DEBUG]: ", "Invalid action passed to the script");
         }
      }
      expr jcs:close($con);

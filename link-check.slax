@@ -1,14 +1,14 @@
 /*
 *
 *    NAME: link-check.slax
-*    PURPOSE: Created for Robert Half to detect the state of an
+*    PURPOSE: Created for ? to detect the state of an
 *             up-stream link.
 *               When DOWN is detected the primary Firewall Filter
 *                  is deactivated.
 *               When UP is detected the primary Firewall Filter is
-*                  activated. 
+*                  activated.
 *
-*    CREDITS: This is a modified version Jay Wilson's shut.slax script.  
+*    CREDITS: This is a modified version Jay Wilson's shut.slax script.
 *
 *
 *    CREATED: 06/03/09
@@ -133,12 +133,12 @@ match / {
     }
     else {
         call write-output($where = "s", $message = "Missing Script Arguments");
-    } 
+    }
 }
 
 /*
 *   NAME: WRITE-OUTPUT
-*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*   PURPOSE: Writes a message to standard and/or the syslog depending on
 *            the parms passed to it.
 *   CALLED: Called after the XML changes have been submitted to MGD process.
 *
@@ -147,7 +147,7 @@ match / {
 *        $level = The syslog message level
 *        $id = Standout message ID
 *        $type = The string identifying the type of message
-*        $message = The string to print out 
+*        $message = The string to print out
 *        $where = Used to specify if "b"oth STDOUT and SYSLOG
 *                 should be written to or only "S"TDOUT
 *
@@ -160,8 +160,8 @@ template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where 
      }
      else {
          expr jcs:syslog($level, $type, $message);
-         
+
          expr jcs:output($stdmessage);
-     }         
+     }
 
 }

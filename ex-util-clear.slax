@@ -1,6 +1,6 @@
 /*
 *
-*    PURPOSE: Created for UVA to clear values 
+*    PURPOSE: Created for ? to clear values 
 *             set for the jnxUtil MIB.
 *
 *    CREATED: 09/24/09
@@ -71,7 +71,7 @@ match / {
             <extensive>;
         }
         var $physical-output-all = jcs:execute($connection, $rpc-all);
-            
+
         for-each ($physical-output-all/physical-interface) {
 
 /*
@@ -82,7 +82,7 @@ match / {
             call util-mib-clear($name = name);
         }
     }
-    
+
     /* Close the connection */
     expr jcs:close( $connection );
     }
@@ -100,7 +100,7 @@ match / {
 */
 template util-mib-clear($name) {
     if ($debug) {
-        <output> jcs:printf("   Processing interface -> %s\n",$name); 
+        <output> jcs:printf("   Processing interface -> %s\n",$name);
 
     }
     var $rpcN = <request-snmp-utility-mib-clear> {
@@ -147,7 +147,7 @@ template util-mib-clear($name) {
 *   NAME: VERIFY-RESULTS
 *   PURPOSE: Checks the results from the jcs:invoke used to stuff
 *            the UTIL MIB.
-*   CALLED: Called after each request-snmp-utility-mib-set is 
+*   CALLED: Called after each request-snmp-utility-mib-set is
 *           invoked.
 *
 *
@@ -177,7 +177,7 @@ template verify-results ($results, $name, $attribute) {
 
 /*
 *   NAME: WRITE-OUTPUT
-*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*   PURPOSE: Writes a message to standard and/or the syslog depending on
 *            the parms passed to it.
 *   CALLED: Called after the XML changes have been submitted to MGD process.
 *
@@ -186,10 +186,10 @@ template verify-results ($results, $name, $attribute) {
 *        $level = The syslog message level
 *        $id = Standout message ID
 *        $type = The string identifying the type of message
-*        $message = The string to print out 
+*        $message = The string to print out
 *        $where = Used to specify output location
 *                     s == syslog
-*                     t == terminal 
+*                     t == terminal
 *                     b == both
 *
 */
@@ -204,9 +204,8 @@ template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where 
      }
      else {
          expr jcs:syslog($level, $type, $message);
-         
+
          expr jcs:output($stdmessage);
-     }         
+     }
 
 }
-

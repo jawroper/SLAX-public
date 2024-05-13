@@ -1,7 +1,7 @@
 /*
 *
 *    NAME: ex-interface.slax
-*    PURPOSE: Created for UCSD to enhance the output of the
+*    PURPOSE: Created for ? to enhance the output of the
 *             "show ethernet-switching interfaces" command.
 *
 *    CREATED: 02/03/09
@@ -14,7 +14,7 @@
 *        V1.00 = Initial release
 *        V1.01 = Added a parm called "fpc".
 *                Used to limit output to a specific member # on
-*                EX3200/EX4200 or to a specific slot $ on the 
+*                EX3200/EX4200 or to a specific slot $ on the
 *                EX8208/EX8216.
 *                If not specified, all interfaces are returned.
 *        V1.10 = Optimized performance
@@ -64,7 +64,7 @@ match / {
 
 /*
 *
-*   Get all the interfaces, but only look at "ge" and "xe" 
+*   Get all the interfaces, but only look at "ge" and "xe"
 *   At the same time, get the FPC #
 *
 */
@@ -73,7 +73,7 @@ match / {
             var $triple = substring-after(interface-name,'-');
             var $ct1 = substring-before($triple,'/');
             if ((contains(interface-name,"ge") || contains(interface-name,"xe")) && (not($fpc) || ($fpc == $ct1))) {
-        
+
 /*
 *
 *   Output has unit appended to the interface name.  Drop it because
@@ -97,10 +97,10 @@ match / {
 *
 *   PARMS PASSED:
 *        $interface = interface to mash-up
-*        $physical-output = the structure that is returned with the 
+*        $physical-output = the structure that is returned with the
 *                           RPC interface-information call.
 *        $switch-output = the structure that goes with the interface
-*                         that was returned with the RPC 
+*                         that was returned with the RPC
 *                         ethernet-switching-interface-information.
 *
 */
@@ -130,7 +130,7 @@ template mash-up($interface, $physical-output, $switch-output) {
 *   CHANGE THE NEXT FOR-EACH!!!!!!!!!!!!!!
 *
 *   interface-vlan-member was returned in JUNOS 9.1
-*   interface-vlan-name was returned in JUNOS 9.3   
+*   interface-vlan-name was returned in JUNOS 9.3
 *
 */
        for-each($switch-output/interface-vlan-member-list/interface-vlan-name) {
@@ -164,8 +164,7 @@ template mash-up($interface, $physical-output, $switch-output) {
 */
               <output> jcs:printf("%-22s%-23s %-12s\n", " ", ., $status);
           }
-             
-       } 
+
+       }
     }
 }
-

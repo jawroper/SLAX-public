@@ -1,6 +1,6 @@
 /*
 *
-*    PURPOSE: Created for UVA to retrieve interface values
+*    PURPOSE: Created for ? to retrieve interface values
 *             via SNMP instead of XML.
 *
 *    CREATED: 09/14/09
@@ -137,7 +137,7 @@ match / {
             <extensive>;
         }
         var $physical-output-all = jcs:execute($connection, $rpc-all);
-            
+
         for-each ($physical-output-all/physical-interface) {
 
 /*
@@ -162,7 +162,7 @@ match / {
             call util-mib-stuff($name = name, $speed = speed, $duplex = duplex, $lpduplex = ethernet-autonegotiation/link-partner-duplexity, $lpspeed = ethernet-autonegotiation/link-partner-speed, $trunk = $trunk);
         }
     }
-    
+
     /* Close the connection */
     expr jcs:close( $connection );
     }
@@ -186,7 +186,7 @@ match / {
 */
 template util-mib-stuff($name, $speed, $duplex, $lpduplex, $lpspeed, $trunk) {
     if ($debug) {
-        <output> jcs:printf("   Processing interface -> %s, SP -> %s, DU -> %s, LSP -> %s, LDU -> %s, TRUNK -> %s\n",$name,$speed,$duplex,$lpspeed,$lpduplex, $trunk); 
+        <output> jcs:printf("   Processing interface -> %s, SP -> %s, DU -> %s, LSP -> %s, LDU -> %s, TRUNK -> %s\n",$name,$speed,$duplex,$lpspeed,$lpduplex, $trunk);
 
     }
     var $rpcN = <request-snmp-utility-mib-set> {
@@ -238,7 +238,7 @@ template util-mib-stuff($name, $speed, $duplex, $lpduplex, $lpspeed, $trunk) {
 *   NAME: VERIFY-RESULTS
 *   PURPOSE: Checks the results from the jcs:invoke used to stuff
 *            the UTIL MIB.
-*   CALLED: Called after each request-snmp-utility-mib-set is 
+*   CALLED: Called after each request-snmp-utility-mib-set is
 *           invoked.
 *
 *
@@ -268,7 +268,7 @@ template verify-results ($results, $name, $attribute) {
 
 /*
 *   NAME: WRITE-OUTPUT
-*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*   PURPOSE: Writes a message to standard and/or the syslog depending on
 *            the parms passed to it.
 *   CALLED: Called after the XML changes have been submitted to MGD process.
 *
@@ -277,10 +277,10 @@ template verify-results ($results, $name, $attribute) {
 *        $level = The syslog message level
 *        $id = Standout message ID
 *        $type = The string identifying the type of message
-*        $message = The string to print out 
+*        $message = The string to print out
 *        $where = Used to specify output location
 *                     s == syslog
-*                     t == terminal 
+*                     t == terminal
 *                     b == both
 *
 */
@@ -295,9 +295,8 @@ template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where 
      }
      else {
          expr jcs:syslog($level, $type, $message);
-         
+
          expr jcs:output($stdmessage);
-     }         
+     }
 
 }
-

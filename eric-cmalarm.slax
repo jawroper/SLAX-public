@@ -1,7 +1,7 @@
 /*
 *
 *    NAME: eric-cmalarm.slax
-*    PURPOSE: Created for Eric to disable/enable interfaces
+*    PURPOSE: Created for ? to disable/enable interfaces
 *             on an SRX based on the CMALARM error message.
 *
 *
@@ -49,7 +49,7 @@ match / {
             var $msg1 = "event = " _ $event;
             expr jcs:syslog("user.info", "eric-CMALARM.slax[Debug]: ", $msg1);
         }
-        
+
         call disable;
         expr jcs:close($con);
     }

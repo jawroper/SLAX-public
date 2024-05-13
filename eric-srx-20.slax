@@ -1,7 +1,7 @@
 ﻿/*
 *
 *    NAME: eric-srx.slax
-*    PURPOSE: Created for Eric to disable/enable interfaces
+*    PURPOSE: Created for ? to disable/enable interfaces
 *             on an SRX based on specific events occurring.
 *
 *
@@ -95,7 +95,7 @@ match / {
             call enable;
         }
         else {
-            expr jcs:syslog($syslog-level, "eric-srx.slax[DEBUG]: ", "Invalid action passed to the script"); 
+            expr jcs:syslog($syslog-level, "eric-srx.slax[DEBUG]: ", "Invalid action passed to the script");
         }
      }
      expr jcs:close($con);
@@ -237,7 +237,7 @@ template make-element($iface) {
     var $fixediface = {
         if (contains($iface, ",")) {
             expr normalize-space($iface);
-        
+
         } else {
             expr normalize-space($iface)  _ ",";
         }
@@ -250,7 +250,7 @@ template make-element($iface) {
     var $before = substring-before($fixediface, ",");
     var $after = substring-after($fixediface, ",");
 /*
-* 
+*
 *  output current value and loop until all values have been output
 *
 */

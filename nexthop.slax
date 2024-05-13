@@ -1,7 +1,7 @@
 /*
 *
 *    NAME: nexthop.slax
-*    PURPOSE: Created for ViaSat to responded to an RPM failure
+*    PURPOSE: Created for ? to responded to an RPM failure
 *             by installing a next-hop route.
 *
 *    CREATED: 11/18/09
@@ -126,13 +126,13 @@ match / {
     }
     else {
         call write-output($where = "s", $type = "NEXTHOP.SLAX[Info]: ", $message = "Missing Script Arguments");
-    } 
+    }
     }
 }
 
 /*
 *   NAME: WRITE-OUTPUT
-*   PURPOSE: Writes a message to standard and/or the syslog depending on 
+*   PURPOSE: Writes a message to standard and/or the syslog depending on
 *            the parms passed to it.
 *   CALLED: Called after the XML changes have been submitted to MGD process.
 *
@@ -141,7 +141,7 @@ match / {
 *        $level = The syslog message level
 *        $id = Standout message ID
 *        $type = The string identifying the type of message
-*        $message = The string to print out 
+*        $message = The string to print out
 *        $where = Used to specify if "b"oth STDOUT and SYSLOG
 *                 should be written to or only "S"TDOUT
 *
@@ -154,9 +154,9 @@ template write-output($level = "user.info", $id = "INFO: ", $type = " ", $where 
      }
      else {
          expr jcs:syslog($level, $type, $message);
-         
+
          expr jcs:output($stdmessage);
-     }         
+     }
 
 }
 /*
